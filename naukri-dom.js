@@ -186,6 +186,12 @@
     return norm(input.value);
   }
 
+  // After a successful apply Naukri leaves the job page for an "Apply Confirmation" page:
+  // /myapply/saveApply?strJobsarr=[<jobId>]&applytype=single...
+  function onConfirmationPage() {
+    return /\/myapply\/saveApply/i.test(location.pathname);
+  }
+
   function successText() {
     var text = document.body ? document.body.innerText.slice(0, 8000) : '';
     return /you have successfully applied|successfully applied|application (has been )?(sent|submitted)|applied successfully/i.test(text);
@@ -195,6 +201,7 @@
   //   { state: 'success' } | { state: 'quota' } | { state: 'waiting' }
   //   { state: 'chat', question, context, kind: 'radio'|'checkboxes'|'chips'|'text', options, step }
   function readChat() {
+    if (onConfirmationPage()) return { state: 'success' };
     var text = document.body ? document.body.innerText.slice(0, 8000) : '';
     var d = drawer();
     if (!d) {
