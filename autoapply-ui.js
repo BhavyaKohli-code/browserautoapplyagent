@@ -1,4 +1,4 @@
-// Side panel UI for LinkedIn Auto Apply: settings/profile forms, live log, confirm prompt,
+// Side panel UI for Auto Apply (LinkedIn / Indeed / Naukri): settings/profile forms, live log, confirm prompt,
 // saved-answer editor and history. The actual work happens in autoapply.js.
 (function() {
   var AA = window.AutoApply;
@@ -66,17 +66,22 @@
   }
 
   // ---------- confirm-before-submit ----------
-  function confirmSubmit(job, qa) {
+  // opts (Naukri): { action: button label, note: shown instead of the LinkedIn hints }
+  function confirmSubmit(job, qa, opts) {
+    opts = opts || {};
+    var action = opts.action || 'Submit';
     return new Promise(function(resolve) {
       var box = $('aaConfirm');
-      var html = '<div class="confirm-box"><h4>Ready to submit: ' + esc(job.title) + ' — ' + esc(job.company) + '</h4>';
-      if (qa.length) {
+      var html = '<div class="confirm-box"><h4>Ready to ' + esc(action.toLowerCase()) + ': ' + esc(job.title) + ' — ' + esc(job.company) + '</h4>';
+      if (opts.note) {
+        html += '<div class="hint" style="margin-bottom:8px">' + esc(opts.note) + '</div>';
+      } else if (qa.length) {
         html += '<ul>' + qa.map(function(x) { return '<li>' + esc(x.q.slice(0, 80)) + ' → <b>' + esc(x.a.slice(0, 60)) + '</b> <span class="src">[' + x.source + ']</span></li>'; }).join('') + '</ul>';
       } else {
         html += '<div class="hint" style="margin-bottom:8px">No extra questions – LinkedIn prefilled everything.</div>';
       }
-      html += '<div class="hint" style="margin-bottom:8px">You can review/edit the form in the LinkedIn tab before choosing.</div>';
-      html += '<div class="row"><button class="btn primary" data-d="submit">Submit</button><button class="btn ghost" data-d="skip">Skip job</button><button class="btn ghost" data-d="manual">I submitted it myself</button></div></div>';
+      if (!opts.note) html += '<div class="hint" style="margin-bottom:8px">You can review/edit the form in the job tab before choosing.</div>';
+      html += '<div class="row"><button class="btn primary" data-d="submit">' + esc(action) + '</button><button class="btn ghost" data-d="skip">Skip job</button><button class="btn ghost" data-d="manual">I did it myself</button></div></div>';
       box.innerHTML = html;
       $('aaLog').scrollTop = $('aaLog').scrollHeight;
       box.scrollIntoView({ block: 'nearest' });
