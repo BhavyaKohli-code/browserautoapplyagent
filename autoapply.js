@@ -184,7 +184,7 @@
 
   async function getSiteTab(site) {
     var tabs = await chrome.tabs.query({ url: site.tabQuery, currentWindow: true });
-    tabs = tabs.filter(function(t) { return !/smartapply\.|\/job-listings-/.test(t.url || ''); });
+    tabs = tabs.filter(function(t) { return !/smartapply\.|\/job-listings-|\/myapply\//.test(t.url || ''); });
     if (tabs.length) return tabs[0].id;
     var t = await chrome.tabs.create({ url: site.home || 'about:blank', active: true });
     await waitForLoad(t.id);
@@ -865,10 +865,17 @@
   // Leaving the chatbot (closing the tab) before the last answer means nothing is submitted.
   var NAUKRI_KIND = { chips: 'radio', radio: 'radio', checkboxes: 'checkboxes', text: 'text' };
 
+  // Naukri confirms a successful apply by navigating to /myapply/saveApply?strJobsarr=[id]
+  async function onNaukriConfirmation() {
+    try { return /naukri\.com\/myapply\/saveApply/i.test((await chrome.tabs.get(state.formTabId)).url || ''); }
+    catch (e) { return false; }
+  }
+
   async function waitChat(oldStep, seconds) {
     var st = { state: 'waiting' };
     for (var i = 0; i < seconds * 2 && !state.stop; i++) {
       await sleep(500);
+      if (await onNaukriConfirmation()) return { state: 'success' };
       try { st = await formCall('readChat'); } catch (e) { continue; }
       if (st.state === 'success' || st.state === 'quota') return st;
       if (st.state === 'chat' && st.kind !== 'none' && st.step !== oldStep) return st;
@@ -939,6 +946,7 @@
       if (st.state === 'success') { await finishForm(); return { status: 'applied', reason: '', qa: qa }; }
       if (st.state === 'quota') { await finishForm(); throw new Error('Naukri says the daily apply limit is reached.'); }
       if (st.state !== 'chat' || st.kind === 'none') {
+        if (await onNaukriConfirmation()) { await finishForm(); return { status: 'applied', reason: '', qa: qa }; }
         await finishForm();
         return { status: 'unknown', reason: 'No confirmation or chatbot question after Apply', qa: qa };
       }
@@ -1029,6 +1037,25 @@
       await save('aaAnswers', answers);
       await save('aaMigratedV07', true);
       if (dropped) ui.log('Cleaned ' + dropped + ' AI answers that profile rules now handle.', 'info');
+    }
+
+    // One-time fix (v0.8.1): Naukri applications that went through but were logged as "unknown"
+    // because the confirmation page (/myapply/saveApply) was not recognised
+    var mig81 = await chrome.storage.local.get('aaMigratedV081');
+    if (!mig81.aaMigratedV081) {
+      var fixed = 0;
+      history.forEach(function(h) {
+        if (h.site === 'Naukri' && h.status === 'unknown' && /No confirmation or chatbot question after Apply/.test(h.reason || '')) {
+          h.status = 'applied';
+          h.reason = 'Applied (confirmation page detected later)';
+          seen['naukri:' + h.id] = 'applied';
+          fixed++;
+        }
+      });
+      await save('aaHistory', history);
+      await save('aaSeen', seen);
+      await save('aaMigratedV081', true);
+      if (fixed) { ui.log('Corrected ' + fixed + ' earlier Naukri applications from "unknown" to "applied".', 'info'); ui.refresh(); }
     }
 
     if (!profile.firstName || !profile.totalYears) {
