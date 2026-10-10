@@ -358,22 +358,66 @@
     return { ok: false, clicked: null, message: 'No Continue/Submit button' };
   }
 
+  // Submit, including a disabled one (buttonByText skips disabled buttons)
+  function submitButton() {
+    var s = formRoot().querySelector('[data-testid="submit-application-button"]');
+    if (s && !isHoneypot(s)) return s;
+    var all = document.querySelectorAll('button');
+    for (var i = 0; i < all.length; i++) {
+      if (!isHoneypot(all[i]) && /^(submit your application|submit application|submit)$/i.test(norm(all[i].innerText))) return all[i];
+    }
+    return null;
+  }
+
+  function isDisabled(b) { return !!b && (b.disabled || b.getAttribute('aria-disabled') === 'true'); }
+
+  // "I'm not a robot" reCAPTCHA checkbox on the review page (Oct 2026): Submit stays disabled
+  // until a person ticks it. The bot never touches it - it waits for the user.
+  function robotCheckVisible() {
+    return Array.prototype.slice.call(document.querySelectorAll('iframe')).some(function(f) {
+      return /recaptcha\/(enterprise\/)?(anchor|bframe)|hcaptcha|challenges\.cloudflare/.test(f.src || '') && visible(f);
+    });
+  }
+
+  function submitState() {
+    var s = submitButton();
+    return {
+      submit: !!s,
+      disabled: isDisabled(s),
+      robotCheck: robotCheckVisible(),
+      submitted: /post-apply/.test(location.pathname)
+    };
+  }
+
+  // Optional "update your Indeed resume" steps (resume-module/profile-education,
+  // profile-work-experience/create ...): "Save and continue" is blocked when Indeed thinks
+  // details are missing, so take the step's Skip button.
+  function profileSkipButton() {
+    if (!/\/resume-module\/profile-/.test(location.pathname)) return null;
+    var skip = Array.prototype.slice.call(document.querySelectorAll('[data-testid$="-skip-button"]')).find(function(b) {
+      return !isHoneypot(b) && !isDisabled(b);
+    });
+    return skip || buttonByText(formRoot(), /^skip$/i);
+  }
+
   // Indeed ignores synthetic clicks on Continue/Submit, so the orchestrator clicks with real
   // mouse events (chrome.debugger). This finds the button - waiting through "Preparing review"
   // style loading states - scrolls it into view and returns its viewport centre.
   async function primaryTarget(allowSubmit) {
     for (var i = 0; i < 40; i++) {
       var root = formRoot();
-      var submit = root.querySelector('[data-testid="submit-application-button"]');
-      if (!submit || isHoneypot(submit)) submit = buttonByText(document, /^(submit your application|submit application|submit)$/i);
+      var submit = submitButton();
       var cont = null;
       if (!submit) {
-        cont = root.querySelector('[data-testid="continue-button"]');
+        cont = profileSkipButton();
+        if (!cont) cont = root.querySelector('[data-testid="continue-button"]');
         if (!cont || isHoneypot(cont)) cont = buttonByText(document, /^(continue|continue to .{1,30}|review your application|review|next|save and continue)$/i);
       }
       var btn = submit || cont;
       if (btn) {
         if (submit && !allowSubmit) return { ok: true, clicked: 'submit-ready' };
+        // Greyed-out Submit: a person has to tick "I'm not a robot" first - never click it
+        if (submit && isDisabled(submit)) return { ok: true, clicked: 'needs-human', robotCheck: robotCheckVisible() };
         btn.scrollIntoView({ block: 'center' });
         await sleep(400);
         // Coordinates must hit the button itself (layout can shift, e.g. when the browser's
@@ -430,6 +474,7 @@
     fillField: fillField,
     clickPrimary: clickPrimary,
     primaryTarget: primaryTarget,
+    submitState: submitState,
     waitForSubmitted: waitForSubmitted,
     pageStatus: pageStatus
   };

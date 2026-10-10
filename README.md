@@ -196,6 +196,16 @@ Site notes:
   The country picks the Indeed domain (India → in.indeed.com); "Indeed city" narrows it.
   Smartapply pages contain hidden honeypot "Continue" buttons (`hp-continue-button-N`); the bot
   only clicks the visible real one.
+- Indeed now often shows an **"I'm not a robot" checkbox** on the review page; Submit stays
+  disabled until a person ticks it. The bot never touches it: it brings the tab to the front,
+  beeps, and waits up to 3 minutes for you to tick it, then submits by itself.
+- Optional "update your Indeed resume" steps (Review education, Add work experience) are skipped
+  with their Skip button – "Save and continue" is blocked there when Indeed thinks details are missing.
+- Indeed has no worldwide site: with Location "Worldwide", Indeed uses your Profile country
+  (India -> in.indeed.com).
+- Work-authorization questions about another country ("authorized to work in the United States?")
+  are answered No / needs sponsorship. Gender, ethnicity, veteran and disability questions are never
+  answered by the AI: "prefer not to say" if offered, otherwise your Profile, otherwise the job is skipped.
 - Indeed ignores script clicks (`element.click()`) on Continue/Submit, so on Indeed the bot clicks
   with real mouse events through `chrome.debugger` (the same mechanism Playwright/Puppeteer use).
   While it does, the browser shows a "started debugging this browser" bar – that is expected.
