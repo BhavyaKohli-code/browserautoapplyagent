@@ -156,6 +156,39 @@
 
   function refresh() { renderAnswers(); renderHistory(); }
 
+  // ---------- cities list ----------
+  function renderCities() {
+    var box = $('aaCities');
+    box.innerHTML = '';
+    (settings.cities || []).forEach(function(city, i) {
+      var chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.innerHTML = esc(city) + '<button title="Remove">✕</button>';
+      chip.querySelector('button').addEventListener('click', function() {
+        settings.cities.splice(i, 1);
+        AA.save('aaSettings', settings);
+        renderCities();
+      });
+      box.appendChild(chip);
+    });
+  }
+
+  // "Delhi, Gurugram, Remote" adds three cities; duplicates are ignored
+  function addCities() {
+    var input = $('aaCityInput');
+    settings.cities = Array.isArray(settings.cities) ? settings.cities : [];
+    input.value.split(/[,;\n]/).map(function(c) { return c.trim(); }).filter(Boolean).forEach(function(c) {
+      if (!settings.cities.some(function(x) { return x.toLowerCase() === c.toLowerCase(); })) settings.cities.push(c);
+    });
+    input.value = '';
+    AA.save('aaSettings', settings);
+    renderCities();
+  }
+  $('aaCityAdd').addEventListener('click', addCities);
+  $('aaCityInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); addCities(); }
+  });
+
   // ---------- resume upload ----------
   $('aaResumeFile').addEventListener('change', async function() {
     var f = this.files[0];
@@ -225,6 +258,15 @@
       o.value = name; o.textContent = name;
       locSel.appendChild(o);
     });
+
+    // Older versions had one city per site; fold it into the list
+    if (!Array.isArray(settings.cities)) settings.cities = [];
+    if (!settings.cities.length && (settings.naukriLocation || settings.indeedLocation)) {
+      settings.cities = [settings.naukriLocation || settings.indeedLocation];
+      settings.naukriLocation = settings.indeedLocation = '';
+      AA.save('aaSettings', settings);
+    }
+    renderCities();
 
     bind('data-s', function() { return settings; }, 'aaSettings');
     bind('data-p', function() { return profile; }, 'aaProfile');

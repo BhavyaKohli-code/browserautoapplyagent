@@ -37,7 +37,8 @@
     maxDelay: 20,
     fitCheck: false,
     sites: 'linkedin', // linkedin | indeed | naukri | both (LinkedIn + Indeed) | all
-    indeedLocation: '',
+    cities: [], // searched one by one on every site; "Remote" = remote jobs; empty = whole country
+    indeedLocation: '', // older single-city fields, moved into cities on first load
     naukriLocation: ''
   };
 
@@ -47,7 +48,8 @@
     currentCtc: '', expectedCtc: '', salaryCurrency: 'INR', noticeDays: '30',
     workAuthorized: 'Yes', needSponsorship: 'No', willingRelocate: 'Yes', onsiteOk: 'Yes',
     linkedinUrl: '', githubUrl: '', portfolioUrl: '',
-    education: '', notes: '', resumeText: ''
+    education: '', notes: '', resumeText: '',
+    minSkillYears: '3' // any "years of experience with X" answer is at least this
   };
   // Personal defaults from profile-default.js (loaded before this file)
   Object.assign(DEFAULT_PROFILE, window.AA_DEFAULT_PROFILE || {});
@@ -109,14 +111,17 @@
       tabQuery: 'https://www.linkedin.com/*', home: 'https://www.linkedin.com/jobs/',
       seenKey: function(id) { return id; },
       jobUrl: function(id) { return 'https://www.linkedin.com/jobs/view/' + id + '/'; },
-      searchUrl: function(s, k) { return buildSearchUrl(s, k); }
+      searchUrl: async function(s, k, city) {
+        if (isRemote(city)) return buildSearchUrl(s, k, null, true);
+        return buildSearchUrl(s, k, city ? await linkedinGeoId(city) : null, false);
+      }
     },
     indeed: {
-      name: 'Indeed', file: 'indeed-dom.js', ns: '__inAA', applyInNewTab: true, trustedClicks: true,
+      name: 'Indeed', file: 'indeed-dom.js', ns: '__inAA', applyInNewTab: true, trustedClicks: true, pageByUrl: true,
       tabQuery: 'https://*.indeed.com/*',
       seenKey: function(id) { return 'indeed:' + id; },
       jobUrl: function(id, s) { return 'https://' + (INDEED_DOMAINS[s.location] || 'in.indeed.com') + '/viewjob?jk=' + id; },
-      searchUrl: function(s, k) { return buildIndeedUrl(s, k); }
+      searchUrl: function(s, k, city) { return buildIndeedUrl(s, k, city); }
     },
     // Naukri: each job opens in its own tab; applying happens there through a chatbot
     // (applyNaukri) instead of a form with a Submit step.
@@ -125,7 +130,7 @@
       tabQuery: 'https://www.naukri.com/*', home: 'https://www.naukri.com/',
       seenKey: function(id) { return 'naukri:' + id; },
       jobUrl: function(id) { return 'https://www.naukri.com/job-listings-' + id; },
-      searchUrl: function(s, k) { return buildNaukriUrl(s, k); }
+      searchUrl: function(s, k, city) { return buildNaukriUrl(s, k, city); }
     }
   };
 
@@ -205,24 +210,47 @@
     throw new Error(siteName + ' verification was not completed.');
   }
 
-  function buildIndeedUrl(settings, keyword) {
+  function isRemote(city) { return /^\s*(remote|work from home|wfh)\s*$/i.test(city || ''); }
+
+  // LinkedIn ignores city names in search URLs; it needs the city's geoId. Its public location
+  // typeahead (no login needed) gives it; results are cached.
+  async function linkedinGeoId(city) {
+    var key = city.trim().toLowerCase();
+    var cache = await load('aaGeoCache', {});
+    if (cache[key]) return cache[key];
+    try {
+      var res = await fetch('https://www.linkedin.com/jobs-guest/api/typeaheadHits?typeaheadType=GEO' +
+        '&geoTypes=POPULATED_PLACE,ADMIN_DIVISION_2,MARKET_AREA,COUNTRY_REGION&query=' + encodeURIComponent(city.trim()));
+      var hits = res.ok ? await res.json() : [];
+      if (hits.length && hits[0].id) {
+        cache[key] = hits[0].id;
+        await save('aaGeoCache', cache);
+        return hits[0].id;
+      }
+    } catch (e) {}
+    ui.log('LinkedIn does not know the city "' + city + '" – searching the whole country instead.', 'error');
+    return null;
+  }
+
+  function buildIndeedUrl(settings, keyword, city) {
     var domain = INDEED_DOMAINS[settings.location] || 'in.indeed.com';
     var p = new URLSearchParams();
     p.set('q', keyword);
-    p.set('l', settings.indeedLocation || '');
+    p.set('l', isRemote(city) ? 'Remote' : (city || '').trim());
     p.set('iafilter', '1'); // "Easily apply" only
     var days = { r86400: '1', r604800: '7', r2592000: '14' }[settings.datePosted];
     if (days) p.set('fromage', days);
     var wt = settings.workType;
-    if (wt.remote && !wt.onsite && !wt.hybrid) p.set('sc', '0kf:attr(DSQF7);');
+    if (isRemote(city) || (wt.remote && !wt.onsite && !wt.hybrid)) p.set('sc', '0kf:attr(DSQF7);');
     p.set('sort', 'date');
     return 'https://' + domain + '/jobs?' + p.toString();
   }
 
   // naukri.com/<keyword>-jobs-in-<city>?k=..&l=..&experience=N&jobAge=D&wfhType=..
-  function buildNaukriUrl(settings, keyword) {
+  function buildNaukriUrl(settings, keyword, city) {
     var slug = function(x) { return x.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); };
-    var loc = (settings.naukriLocation || '').trim();
+    var remote = isRemote(city);
+    var loc = remote ? '' : (city || '').trim();
     var p = new URLSearchParams();
     p.set('k', keyword);
     if (loc) p.set('l', loc);
@@ -230,7 +258,7 @@
     if (!isNaN(yrs)) p.set('experience', String(yrs)); // jobs whose experience range includes yours
     var days = { r86400: '1', r604800: '7', r2592000: '30' }[settings.datePosted];
     if (days) p.set('jobAge', days);
-    var wt = settings.workType, w = [];
+    var wt = remote ? { remote: true } : settings.workType, w = [];
     if (wt.onsite) w.push('0');
     if (wt.remote) w.push('2');
     if (wt.hybrid) w.push('3');
@@ -238,17 +266,23 @@
     return 'https://www.naukri.com/' + slug(keyword) + '-jobs' + (loc ? '-in-' + slug(loc) : '') + '?' + p.toString();
   }
 
-  function buildSearchUrl(settings, keyword) {
-    var geo = settings.customGeoId.trim() || GEO_IDS[settings.location] || GEO_IDS.India;
+  function buildSearchUrl(settings, keyword, cityGeoId, remoteOnly) {
+    var geo = cityGeoId || settings.customGeoId.trim() || GEO_IDS[settings.location] || GEO_IDS.India;
     var p = new URLSearchParams();
-    p.set('keywords', keyword);
+    // LinkedIn's AI search drops f_WT (and f_E) from the URL, but understands "remote" in the
+    // query: "<keyword> remote" returns only remote jobs (verified Oct 2026)
+    var wtOnlyRemote = remoteOnly || (settings.workType.remote && !settings.workType.onsite && !settings.workType.hybrid);
+    p.set('keywords', wtOnlyRemote && !/\bremote\b/i.test(keyword) ? keyword + ' remote' : keyword);
     p.set('geoId', geo);
     p.set('f_AL', 'true');
     if (settings.datePosted) p.set('f_TPR', settings.datePosted);
     var wt = [];
-    if (settings.workType.onsite) wt.push('1');
-    if (settings.workType.remote) wt.push('2');
-    if (settings.workType.hybrid) wt.push('3');
+    if (remoteOnly) wt.push('2');
+    else {
+      if (settings.workType.onsite) wt.push('1');
+      if (settings.workType.remote) wt.push('2');
+      if (settings.workType.hybrid) wt.push('3');
+    }
     if (wt.length && wt.length < 3) p.set('f_WT', wt.join(','));
     var ex = Object.keys(settings.experience).filter(function(k) { return settings.experience[k]; });
     if (ex.length && ex.length < 6) p.set('f_E', ex.join(','));
@@ -308,6 +342,7 @@
       'GitHub: ' + p.githubUrl,
       'Portfolio: ' + p.portfolioUrl
     ];
+    if (parseFloat(p.minSkillYears)) lines.push('Minimum years of experience to state for ANY skill, tool or domain: ' + p.minSkillYears);
     if (p.notes) lines.push('Other facts: ' + p.notes);
     var out = lines.join('\n');
     if (p.resumeText) out += '\n\nRESUME (excerpt):\n' + p.resumeText.slice(0, 5000);
@@ -317,8 +352,8 @@
   var ANSWER_SYSTEM = 'You fill out job application forms on behalf of the candidate described below. ' +
     'Answer every question as the candidate, using only their facts. ' +
     'Rules: (1) Be truthful - never invent degrees, certifications, clearances or employers. ' +
-    '(2) For "years of experience with X": use the skills list or resume; if X is clearly used in the resume but years are not stated, estimate conservatively (never more than total experience); if X is absent, answer 0. ' +
-    '(3) For yes/no about skills the resume shows, answer Yes; for things not shown, answer No. ' +
+    '(2) For "years of experience with X" (any skill, tool or domain): answer the candidate\'s minimum skill years given in the profile, or more if the skills list says more. Never answer less. ' +
+    '(3) For yes/no "do you have experience / worked with / know X" about any skill, tool or domain, answer Yes. ' +
     '(4) Numeric questions get a plain number only, no units. If a salary question uses a different currency or period than the profile, convert approximately (1 EUR ≈ 95 INR, 1 USD ≈ 88 INR, 1 GBP ≈ 112 INR). ' +
     '(5) Text answers: short and direct, one line unless a paragraph is clearly expected. ' +
     '(6) Never invent URLs, usernames, phone numbers, emails, dates of birth, ID or document numbers. ' +
@@ -370,6 +405,7 @@
     var out = await ollamaJSON(ANSWER_SYSTEM, user, schema);
     var ans = field.kind === 'checkboxes' ? out.answers : out.answer;
     if (typeof ans === 'number') ans = Number.isInteger(ans) ? String(ans) : String(Math.round(ans * 10) / 10);
+    if (typeof ans === 'string' && !(field.options && field.options.length) && isExperienceYears(field.label)) ans = atLeastMinYears(ans, profile);
     ans = fixNumberForError(field, ans);
     if (typeof ans === 'string' && field.maxLength) ans = ans.slice(0, field.maxLength);
     return ans;
@@ -499,6 +535,21 @@
     return d;
   }
 
+  // "How many years of experience with X" style questions
+  var EXPERIENCE_YEARS_RE = /years?.{0,20}experience|experience.{0,20}years?|how many years|^(total|overall|relevant|professional|work) .{0,15}experience/;
+  function isExperienceYears(label) {
+    var l = (label || '').toLowerCase();
+    return EXPERIENCE_YEARS_RE.test(l) && !/months/.test(l);
+  }
+
+  // Never state less than the profile's minimum skill years (default 3) for anything
+  function atLeastMinYears(v, p) {
+    var floor = parseFloat(p.minSkillYears) || 0;
+    var n = parseFloat(numberOnly(v));
+    if (!floor || isNaN(n) || n >= floor) return v;
+    return String(floor);
+  }
+
   // Personal data the LLM must never make up: only the profile may answer these
   var PERSONAL_RE = /date of birth|\bdob\b|birth ?date|aadhaa?r|\bpan\b|passport|social security|\bssn\b|national id|linkedin|github|portfolio|website|\burl\b|e-?mail|phone|mobile|whatsapp/;
 
@@ -574,13 +625,14 @@
         var mentioned = Object.keys(skills).filter(function(s) {
           return s.length > 1 && new RegExp('(^|[^a-z0-9+#])' + s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|[^a-z0-9+#])').test(l);
         });
-        if (mentioned.length) return skills[mentioned.sort(function(a, b) { return b.length - a.length; })[0]];
+        if (mentioned.length) return atLeastMinYears(skills[mentioned.sort(function(a, b) { return b.length - a.length; })[0]], p);
         // Skill/domain-specific ("... experience with Kubernetes?") and not in the skills list -> LLM decides
         // Only clearly generic questions get total experience; "years of startup/Java/... experience" -> LLM
         var generic = /^(how many |total |overall )?(years of )?(total |overall |professional |relevant |work |full[- ]time |industry )*(work )?experience( in years)?( do you (currently )?have)?\??$/;
         var generic2 = /^how many years of (total |overall |professional |relevant |work )*(work )?experience do you (currently )?have\??$/;
         if (generic.test(l) || generic2.test(l) || /^(total|overall) (years of )?experience/.test(l)) return numberOnly(p.totalYears) || null;
-        return null;
+        // Any other skill / tool / domain: the minimum skill years (default 3), never less
+        return parseFloat(p.minSkillYears) ? String(parseFloat(p.minSkillYears)) : null;
       }
     }
 
@@ -592,6 +644,16 @@
     }
     if (/immediate(ly)? (joiner|join|available)|join immediately/.test(l) && p.noticeDays) {
       return yesNo(field, parseInt(p.noticeDays, 10) <= 7 ? 'Yes' : 'No');
+    }
+
+    // "Do you have experience with X?" / "Have you worked on X?" -> Yes, unless it asks for more
+    // years than the candidate states (minimum skill years or total experience, whichever is more)
+    if ((kind === 'radio' || kind === 'select') && hasOpts && pickOption(field.options, /^yes\b/i) &&
+        /experience|worked (with|on|in)|hands.?on|exposure|familiar|proficien|knowledge of|skilled in/.test(l) &&
+        /^(do|have|are|did|can) you|^(any )?(prior |previous )?experience/.test(l)) {
+      var need = l.match(/(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs)/);
+      var have = Math.max(parseFloat(p.minSkillYears) || 0, parseFloat(p.totalYears) || 0);
+      if (!need || parseFloat(need[1]) <= have) return yesNo(field, 'Yes');
     }
 
     if (kind === 'radio' || kind === 'select') {
@@ -1019,6 +1081,12 @@
     var answers = await load('aaAnswers', {});
     var history = await load('aaHistory', []);
     var seen = await load('aaSeen', {});
+    if (!Array.isArray(settings.cities)) settings.cities = [];
+    if (!settings.cities.length && (settings.naukriLocation || settings.indeedLocation)) {
+      settings.cities = [settings.naukriLocation || settings.indeedLocation];
+      settings.naukriLocation = settings.indeedLocation = '';
+      await save('aaSettings', settings);
+    }
     state.settings = settings;
     state.profile = profile;
 
@@ -1111,9 +1179,17 @@
     state.formTabId = state.tabId;
     await chrome.tabs.update(state.tabId, { active: true });
 
-    for (var k = 0; k < keywords.length; k++) {
-      var url = site.searchUrl(settings, keywords[k]);
-      ui.log('Searching: "' + keywords[k] + '"', 'info');
+    var cities = (settings.cities || []).map(function(c) { return String(c).trim(); }).filter(Boolean);
+    // City by city: all keywords in the first city (e.g. Remote), then all keywords in the next...
+    var searches = [];
+    (cities.length ? cities : ['']).forEach(function(city) {
+      keywords.forEach(function(kw) { searches.push({ keyword: kw, city: city }); });
+    });
+
+    for (var k = 0; k < searches.length; k++) {
+      if (state.stop || done >= target) return;
+      var url = await site.searchUrl(settings, searches[k].keyword, searches[k].city);
+      ui.log('Searching: "' + searches[k].keyword + '"' + (searches[k].city ? ' in ' + searches[k].city : ''), 'info');
       await chrome.tabs.update(state.tabId, { url: url });
       await waitForLoad(state.tabId);
       await sleep(3000);
@@ -1183,8 +1259,8 @@
           for (var w = 0; w < delay * 2 && !state.stop; w++) await sleep(500);
         }
 
-        // Next page of results: LinkedIn paginates in-page, Indeed through a link
-        if (site.applyInNewTab) {
+        // Next page of results: Indeed through a link; LinkedIn and Naukri by clicking Next in the page
+        if (site.pageByUrl) {
           var nx = await call('nextPageUrl');
           if (!nx.url) break;
           await chrome.tabs.update(state.tabId, { url: nx.url });
@@ -1222,6 +1298,7 @@
     _ruleAnswer: ruleAnswer,
     _resolveAnswer: resolveAnswer,
     _answerWithLLM: answerWithLLM,
-    _expectsNumber: expectsNumber
+    _expectsNumber: expectsNumber,
+    _linkedinGeoId: linkedinGeoId
   };
 })();

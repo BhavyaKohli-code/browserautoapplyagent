@@ -96,6 +96,23 @@
     };
   }
 
+  // Naukri's "Next" link (/x-jobs-2) drops the search filters when opened as a URL - opening it
+  // redirects to the unfiltered page 1. Clicking it in the page keeps them (verified Oct 2026).
+  async function nextResultsPage() {
+    var pag = q('[class*="pagination"]') || document;
+    var a = byText(pag, 'a', /^next$/i);
+    if (!a || a.getAttribute('disabled') !== null || /disabled/i.test(a.className)) return { ok: false };
+    var ids = function() { return cardEls().map(function(c) { return c.getAttribute('data-job-id'); }).join(','); };
+    var before = ids();
+    a.click();
+    for (var i = 0; i < 40; i++) {
+      await sleep(300);
+      var now = ids();
+      if (now && now !== before) { await sleep(800); return { ok: true }; }
+    }
+    return { ok: false };
+  }
+
   function nextPageUrl() {
     var pag = q('[class*="pagination"]') || document;
     var a = byText(pag, 'a', /^next$/i);
@@ -347,6 +364,7 @@
     selectCard: selectCard,
     getJobDetails: getJobDetails,
     nextPageUrl: nextPageUrl,
+    nextResultsPage: nextResultsPage,
     jobStatus: jobStatus,
     clickApply: clickApply,
     readChat: readChat,
