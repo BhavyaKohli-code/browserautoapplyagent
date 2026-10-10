@@ -175,8 +175,10 @@ Your default profile lives in `profile-default.js`; anything edited in the panel
 1. Be logged in to LinkedIn / Indeed / Naukri in this Chrome profile.
 2. Open the side panel → **Auto Apply**.
 3. Check **Profile** (prefilled from `profile-default.js`).
-4. Set **Job search** (titles one per line, location, date posted, work type, experience;
-   optional Indeed city and Naukri city).
+4. Set **Job search**: titles one per line, country, date posted, work type, and **Cities**.
+   Type a city and press **+** (or Enter); "Remote, Noida, Gurugram" adds three at once, ✕ removes
+   one. The bot searches **city by city**: every keyword in the first city (e.g. Remote), then
+   every keyword in the next city, and so on – on each site. No cities = the whole country.
 5. Pick a **Mode**:
    - *Dry run* – fills every form up to Submit, then discards. Do this first.
    - *Ask me before each submit* – shows the answers, you click Submit / Skip.
@@ -199,6 +201,19 @@ Site notes:
   While it does, the browser shows a "started debugging this browser" bar – that is expected.
   The debugger also auto-accepts Indeed's "Leave site?" prompt when an apply tab is closed.
 
+Experience answers:
+- **Min years for any skill** (Profile, default **3**): every "years of experience with X" answer
+  is at least this – for skills in your list with fewer years, and for skills not in your list at
+  all. Higher values from your skills list (e.g. 3.5) are kept. "Do you have experience with X?"
+  is answered **Yes** (unless it asks for more years than you have).
+
+Cities per site:
+- LinkedIn: each city is turned into LinkedIn's location id automatically (cached). "Remote"
+  searches "<keyword> remote" in your country – LinkedIn's new search ignores the remote URL filter.
+- Indeed: the city goes into the location box; "Remote" also sets Indeed's remote filter.
+- Naukri: `naukri.com/<keyword>-jobs-in-<city>`; "Remote" uses Naukri's work-from-home filter.
+  Further result pages are opened by clicking Next in the page (Naukri's page-2 link drops filters).
+
 Answer safety:
 - Personal data (date of birth, URLs, phone, email, ID numbers) is only ever taken from your
   Profile – the AI is not allowed to guess it. If a form requires one you haven't filled in, that
@@ -219,8 +234,8 @@ Naukri notes:
   stops when Naukri says it's reached.
 - Search uses `naukri.com/<keyword>-jobs-in-<city>` with your total experience, date posted
   (1/7/30 days) and work type (office / remote / hybrid).
-- Run a few jobs in *Ask me* mode first and watch the chatbot – Naukri's page markup was
-  modelled, not yet verified on a live run.
+- A successful apply opens Naukri's "Apply Confirmation" page (`/myapply/saveApply`); that is
+  what the bot counts as applied.
 
 General notes:
 - Jobs whose forms it can't complete are discarded and logged, never half-submitted.

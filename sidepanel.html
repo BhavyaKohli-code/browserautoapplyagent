@@ -210,6 +210,13 @@ input[type="file"] { display: none; }
 .aa .ans-row .del { cursor: pointer; color: #666; text-align: center; }
 .aa .ans-row .del:hover { color: #ef4444; }
 .aa .src { font-size: 9px; color: #666; }
+.aa .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+.aa .chips:empty::before { content: 'All cities (whole country)'; font-size: 11px; color: #555; }
+.aa .chip { display: inline-flex; align-items: center; gap: 6px; background: #1f1408; border: 1px solid #5a2a00; color: #ffb27a; border-radius: 999px; padding: 3px 6px 3px 10px; font-size: 11px; }
+.aa .chip button { background: none; border: none; color: #a86a3a; cursor: pointer; font-size: 12px; line-height: 1; padding: 0 2px; }
+.aa .chip button:hover { color: #ef4444; }
+.aa .addrow { display: flex; gap: 6px; }
+.aa .addrow .btn { padding: 6px 12px; font-size: 14px; }
 </style>
 </head>
 <body>
@@ -266,8 +273,10 @@ input[type="file"] { display: none; }
           <label class="f full">Job titles / keywords (one search per line)<textarea data-s="keywords" rows="3"></textarea></label>
           <label class="f">Location<select data-s="location" id="aaLocation"></select></label>
           <label class="f">Custom geoId (optional)<input type="text" data-s="customGeoId" placeholder="from a LinkedIn URL"></label>
-          <label class="f full">Indeed city / area (optional)<input type="text" data-s="indeedLocation" placeholder="e.g. Delhi, Bengaluru, Remote – empty = whole country"></label>
-          <label class="f full">Naukri city (optional)<input type="text" data-s="naukriLocation" placeholder="e.g. Delhi NCR, Bengaluru, Remote – empty = all of India"></label>
+          <div class="f full"><span class="hint">Cities – every keyword is searched in every city, on every site. "Remote" = remote jobs. Empty = whole country.</span>
+            <div class="chips" id="aaCities"></div>
+            <div class="addrow"><input type="text" id="aaCityInput" placeholder="e.g. Delhi, Gurugram, Remote"><button class="btn ghost" id="aaCityAdd" title="Add city">+</button></div>
+          </div>
           <label class="f">Date posted
             <select data-s="datePosted">
               <option value="r86400">Past 24 hours</option>
@@ -310,6 +319,8 @@ input[type="file"] { display: none; }
           <label class="f">Current company<input type="text" data-p="currentCompany"></label>
           <label class="f">Date of birth<input type="text" data-p="dob" placeholder="DD/MM/YYYY – only if forms ask"></label>
           <label class="f">Total years of experience<input type="text" data-p="totalYears" placeholder="e.g. 2"></label>
+          <label class="f">Min years for any skill<input type="number" data-p="minSkillYears" min="0" step="0.5" placeholder="3"></label>
+          <div class="f"><span class="hint">Any "years of experience with X" answer is never lower than this, even for skills not listed below.</span></div>
           <label class="f full">Skills with years<textarea data-p="skills" rows="2" placeholder="Python: 3, LangChain: 2, RAG: 2, AWS Bedrock: 1, React: 2"></textarea></label>
           <label class="f full">Highest education<input type="text" data-p="education" placeholder="B.Tech Computer Science, Delhi University, 2023"></label>
           <label class="f">Current CTC (yearly)<input type="text" data-p="currentCtc" placeholder="1200000"></label>
