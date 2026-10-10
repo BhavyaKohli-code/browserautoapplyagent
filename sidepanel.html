@@ -146,6 +146,70 @@ input[type="file"] { display: none; }
   color: #777; cursor: pointer; transition: all 0.15s;
 }
 .welcome .tip:hover { border-color: #ff6b00; color: #e5e5e5; }
+
+/* Tabs */
+.tabs { display: flex; background: #111; border-bottom: 1px solid #1e1e1e; flex-shrink: 0; }
+.tabs button {
+  flex: 1; background: none; border: none; color: #777; padding: 9px 0; font-size: 12px;
+  font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent;
+}
+.tabs button.active { color: #ff6b00; border-bottom-color: #ff6b00; }
+.view { display: none; flex: 1; flex-direction: column; min-height: 0; }
+.view.active { display: flex; }
+
+/* Auto Apply */
+.aa { flex: 1; overflow-y: auto; padding: 12px 14px 20px; display: flex; flex-direction: column; gap: 10px; }
+.aa > * { flex-shrink: 0; }
+.aa::-webkit-scrollbar { width: 5px; }
+.aa::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+.aa details { background: #111; border: 1px solid #1e1e1e; border-radius: 10px; }
+.aa summary { padding: 10px 12px; cursor: pointer; font-weight: 600; font-size: 12px; color: #ccc; list-style: none; display: flex; justify-content: space-between; }
+.aa summary::after { content: '+'; color: #555; }
+.aa details[open] summary::after { content: '–'; }
+.aa .sec { padding: 0 12px 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.aa .full { grid-column: 1 / -1; }
+.aa label.f { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; color: #888; }
+.aa input[type=text], .aa input[type=number], .aa select, .aa textarea {
+  background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 6px; color: #e5e5e5;
+  font: inherit; font-size: 12px; padding: 6px 8px; outline: none; width: 100%;
+}
+.aa textarea { resize: vertical; min-height: 54px; }
+.aa input:focus, .aa select:focus, .aa textarea:focus { border-color: #ff6b00; }
+.aa .checks { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: #aaa; }
+.aa .checks label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.aa .hint { font-size: 10.5px; color: #666; line-height: 1.45; }
+.aa .runbar { display: flex; gap: 8px; align-items: center; }
+.aa .btn { border: none; border-radius: 8px; padding: 9px 14px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.aa .btn.primary { background: #ff6b00; color: #fff; flex: 1; }
+.aa .btn.primary:disabled { background: #5a2a00; color: #aaa; cursor: default; }
+.aa .btn.ghost { background: #222; color: #bbb; }
+.aa .btn.danger { background: #3a1212; color: #ef4444; }
+.aa .stats { display: flex; gap: 8px; font-size: 11px; color: #888; }
+.aa .stats b { color: #e5e5e5; }
+.aa .log {
+  background: #0d0d0d; border: 1px solid #1e1e1e; border-radius: 10px; padding: 8px 10px;
+  font-family: 'SF Mono', 'Fira Code', Consolas, monospace; font-size: 10.5px; line-height: 1.55;
+  min-height: 90px; max-height: 320px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+}
+.aa .log .job { color: #ff9a4d; font-weight: 600; margin-top: 4px; }
+.aa .log .qa { color: #8a8a8a; }
+.aa .log .done { color: #22c55e; }
+.aa .log .skip { color: #777; }
+.aa .log .error { color: #ef4444; }
+.aa .log .info { color: #a78bfa; }
+.aa .confirm-box { background: #1a1206; border: 1px solid #ff6b00; border-radius: 10px; padding: 10px 12px; font-size: 12px; }
+.aa .confirm-box h4 { color: #ff6b00; font-size: 12px; margin-bottom: 6px; }
+.aa .confirm-box ul { padding-left: 16px; color: #aaa; font-size: 11px; max-height: 160px; overflow-y: auto; margin-bottom: 8px; }
+.aa .confirm-box .row { display: flex; gap: 6px; flex-wrap: wrap; }
+.aa table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.aa td { padding: 4px 4px; border-bottom: 1px solid #1c1c1c; vertical-align: top; color: #aaa; }
+.aa td.st-applied { color: #22c55e; } .aa td.st-skipped, .aa td.st-unknown { color: #999; } .aa td.st-dry-run { color: #a78bfa; }
+.aa a { color: #ff9a4d; text-decoration: none; }
+.aa .ans-row { display: grid; grid-template-columns: 1fr 1fr 22px; gap: 6px; align-items: center; font-size: 11px; color: #aaa; padding: 4px 0; border-bottom: 1px solid #1c1c1c; }
+.aa .ans-row input { padding: 4px 6px; font-size: 11px; }
+.aa .ans-row .del { cursor: pointer; color: #666; text-align: center; }
+.aa .ans-row .del:hover { color: #ef4444; }
+.aa .src { font-size: 9px; color: #666; }
 </style>
 </head>
 <body>
@@ -155,6 +219,137 @@ input[type="file"] { display: none; }
     <select class="model-select" id="model"><option>loading...</option></select>
   </div>
 
+  <div class="tabs">
+    <button data-view="viewApply" class="active">Auto Apply</button>
+    <button data-view="viewChat">Browser Agent</button>
+  </div>
+
+  <div class="view active" id="viewApply">
+    <div class="aa">
+      <div class="runbar">
+        <select data-s="sites" title="Where to apply" style="width:auto;flex:0 0 auto">
+          <option value="linkedin">LinkedIn</option>
+          <option value="indeed">Indeed</option>
+          <option value="both">LinkedIn + Indeed</option>
+        </select>
+        <button class="btn primary" id="aaStart">Start applying</button>
+        <button class="btn danger" id="aaStop" style="display:none">Stop</button>
+      </div>
+      <div class="stats" id="aaStats"></div>
+      <div id="aaConfirm"></div>
+      <div class="log" id="aaLog"><div class="info">Fill in your Profile once, pick a mode, and press Start. Pick LinkedIn, Indeed or both, then press Start. Keep this panel open and the Chrome window visible (not minimized) while it runs.</div></div>
+
+      <details id="secRun" open>
+        <summary>Run settings</summary>
+        <div class="sec">
+          <label class="f full">Mode
+            <select data-s="mode">
+              <option value="dry">Dry run – fill forms, never submit (test first)</option>
+              <option value="confirm">Ask me before each submit</option>
+              <option value="auto">Fully automatic – submit without asking</option>
+            </select>
+          </label>
+          <label class="f">Max applications per site<input type="number" data-s="maxApplications" min="1" max="200"></label>
+          <label class="f">AI job-fit filter
+            <select data-s="fitCheck"><option value="false">Off – apply to all matches</option><option value="true">On – skip poor fits</option></select>
+          </label>
+          <label class="f">Min delay between jobs (s)<input type="number" data-s="minDelay" min="0"></label>
+          <label class="f">Max delay between jobs (s)<input type="number" data-s="maxDelay" min="0"></label>
+        </div>
+      </details>
+
+      <details id="secSearch">
+        <summary>Job search</summary>
+        <div class="sec">
+          <label class="f full">Job titles / keywords (one search per line)<textarea data-s="keywords" rows="3"></textarea></label>
+          <label class="f">Location<select data-s="location" id="aaLocation"></select></label>
+          <label class="f">Custom geoId (optional)<input type="text" data-s="customGeoId" placeholder="from a LinkedIn URL"></label>
+          <label class="f full">Indeed city / area (optional)<input type="text" data-s="indeedLocation" placeholder="e.g. Delhi, Bengaluru, Remote – empty = whole country"></label>
+          <label class="f">Date posted
+            <select data-s="datePosted">
+              <option value="r86400">Past 24 hours</option>
+              <option value="r604800">Past week</option>
+              <option value="r2592000">Past month</option>
+              <option value="">Any time</option>
+            </select>
+          </label>
+          <div class="f full"><span class="hint">Work type</span>
+            <div class="checks">
+              <label><input type="checkbox" data-s="workType.onsite"> On-site</label>
+              <label><input type="checkbox" data-s="workType.hybrid"> Hybrid</label>
+              <label><input type="checkbox" data-s="workType.remote"> Remote</label>
+            </div>
+          </div>
+          <div class="f full"><span class="hint">Experience level</span>
+            <div class="checks">
+              <label><input type="checkbox" data-s="experience.1"> Internship</label>
+              <label><input type="checkbox" data-s="experience.2"> Entry</label>
+              <label><input type="checkbox" data-s="experience.3"> Associate</label>
+              <label><input type="checkbox" data-s="experience.4"> Mid-Senior</label>
+              <label><input type="checkbox" data-s="experience.5"> Director</label>
+            </div>
+          </div>
+          <label class="f full">Skip titles containing (comma separated)<input type="text" data-s="excludeTitle"></label>
+          <label class="f full">Skip companies (comma separated)<input type="text" data-s="excludeCompanies"></label>
+        </div>
+      </details>
+
+      <details id="secProfile">
+        <summary>Profile (used to answer questions)</summary>
+        <div class="sec">
+          <label class="f">First name<input type="text" data-p="firstName"></label>
+          <label class="f">Last name<input type="text" data-p="lastName"></label>
+          <label class="f">Email<input type="text" data-p="email"></label>
+          <label class="f">Phone<input type="text" data-p="phone"></label>
+          <label class="f">City<input type="text" data-p="city"></label>
+          <label class="f">Country<input type="text" data-p="country"></label>
+          <label class="f">Current title<input type="text" data-p="currentTitle"></label>
+          <label class="f">Current company<input type="text" data-p="currentCompany"></label>
+          <label class="f">Date of birth<input type="text" data-p="dob" placeholder="DD/MM/YYYY – only if forms ask"></label>
+          <label class="f">Total years of experience<input type="text" data-p="totalYears" placeholder="e.g. 2"></label>
+          <label class="f full">Skills with years<textarea data-p="skills" rows="2" placeholder="Python: 3, LangChain: 2, RAG: 2, AWS Bedrock: 1, React: 2"></textarea></label>
+          <label class="f full">Highest education<input type="text" data-p="education" placeholder="B.Tech Computer Science, Delhi University, 2023"></label>
+          <label class="f">Current CTC (yearly)<input type="text" data-p="currentCtc" placeholder="1200000"></label>
+          <label class="f">Expected CTC (yearly)<input type="text" data-p="expectedCtc" placeholder="1800000"></label>
+          <label class="f">Salary currency
+            <select data-p="salaryCurrency"><option>INR</option><option>USD</option><option>EUR</option><option>GBP</option><option>AED</option></select>
+          </label>
+          <label class="f">Notice period (days)<input type="text" data-p="noticeDays"></label>
+          <label class="f">Authorized to work in country?<select data-p="workAuthorized"><option>Yes</option><option>No</option></select></label>
+          <label class="f">Need visa sponsorship?<select data-p="needSponsorship"><option>No</option><option>Yes</option></select></label>
+          <label class="f">Willing to relocate?<select data-p="willingRelocate"><option>Yes</option><option>No</option></select></label>
+          <label class="f">OK with on-site / hybrid?<select data-p="onsiteOk"><option>Yes</option><option>No</option></select></label>
+          <label class="f">LinkedIn URL<input type="text" data-p="linkedinUrl"></label>
+          <label class="f">GitHub URL<input type="text" data-p="githubUrl"></label>
+          <label class="f full">Portfolio URL<input type="text" data-p="portfolioUrl"></label>
+          <label class="f full">Other facts for the AI<textarea data-p="notes" rows="2" placeholder="e.g. Graduated from a Tier-2 college. Comfortable with night shifts. Have a valid passport."></textarea></label>
+          <div class="f full">
+            <span class="hint">Resume text – the AI reads this to answer skill questions. Upload your PDF or paste text.</span>
+            <div class="runbar" style="margin:4px 0"><label class="btn ghost" for="aaResumeFile" style="flex:1;text-align:center">Upload resume PDF</label><input type="file" id="aaResumeFile" accept=".pdf,.txt,.md"></div>
+            <textarea data-p="resumeText" rows="4"></textarea>
+          </div>
+        </div>
+      </details>
+
+      <details id="secAnswers">
+        <summary>Saved answers <span class="src" id="aaAnsCount"></span></summary>
+        <div class="sec"><div class="full">
+          <div class="hint" style="margin-bottom:6px">Every question the bot answers is remembered here and reused. Fix any wrong answer and it will be used next time ([ai] = generated by the model).</div>
+          <div id="aaAnswers"></div>
+        </div></div>
+      </details>
+
+      <details id="secHistory">
+        <summary>History <span class="src" id="aaHistCount"></span></summary>
+        <div class="sec"><div class="full">
+          <div class="runbar" style="margin-bottom:6px"><button class="btn ghost" id="aaClearSkipped" style="flex:1">Retry skipped jobs next run</button></div>
+          <table id="aaHistory"></table>
+        </div></div>
+      </details>
+    </div>
+  </div>
+
+  <div class="view" id="viewChat">
   <div class="chat" id="chat">
     <div class="welcome" id="welcome">
       <h2>Ollama Browser Agent</h2>
@@ -192,8 +387,12 @@ input[type="file"] { display: none; }
       </button>
     </div>
   </div>
+  </div>
 
   <script src="pdf-extract.js"></script>
   <script src="sidepanel.js"></script>
+  <script src="profile-default.js"></script>
+  <script src="autoapply.js"></script>
+  <script src="autoapply-ui.js"></script>
 </body>
 </html>
