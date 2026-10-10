@@ -48,6 +48,7 @@
     currentCtc: '', expectedCtc: '', salaryCurrency: 'INR', noticeDays: '30',
     workAuthorized: 'Yes', needSponsorship: 'No', willingRelocate: 'Yes', onsiteOk: 'Yes',
     linkedinUrl: '', githubUrl: '', portfolioUrl: '',
+    gender: '', postalCode: '', streetAddress: '', // only used when a form requires them
     education: '', notes: '', resumeText: '',
     minSkillYears: '3' // any "years of experience with X" answer is at least this
   };
@@ -120,7 +121,7 @@
       name: 'Indeed', file: 'indeed-dom.js', ns: '__inAA', applyInNewTab: true, trustedClicks: true, pageByUrl: true,
       tabQuery: 'https://*.indeed.com/*',
       seenKey: function(id) { return 'indeed:' + id; },
-      jobUrl: function(id, s) { return 'https://' + (INDEED_DOMAINS[s.location] || 'in.indeed.com') + '/viewjob?jk=' + id; },
+      jobUrl: function(id, s) { return 'https://' + indeedDomain(s) + '/viewjob?jk=' + id; },
       searchUrl: function(s, k, city) { return buildIndeedUrl(s, k, city); }
     },
     // Naukri: each job opens in its own tab; applying happens there through a chatbot
@@ -232,8 +233,16 @@
     return null;
   }
 
+  // Indeed has one site per country and none for "Worldwide" (www.indeed.com is the US site):
+  // Worldwide / unknown -> the Indeed site of the country in your Profile
+  function indeedDomain(settings) {
+    if (settings.location && settings.location !== 'Worldwide' && INDEED_DOMAINS[settings.location]) return INDEED_DOMAINS[settings.location];
+    var country = state.profile && state.profile.country;
+    return (country && country !== 'Worldwide' && INDEED_DOMAINS[country]) || 'in.indeed.com';
+  }
+
   function buildIndeedUrl(settings, keyword, city) {
-    var domain = INDEED_DOMAINS[settings.location] || 'in.indeed.com';
+    var domain = indeedDomain(settings);
     var p = new URLSearchParams();
     p.set('q', keyword);
     p.set('l', isRemote(city) ? 'Remote' : (city || '').trim());
@@ -551,7 +560,24 @@
   }
 
   // Personal data the LLM must never make up: only the profile may answer these
-  var PERSONAL_RE = /date of birth|\bdob\b|birth ?date|aadhaa?r|\bpan\b|passport|social security|\bssn\b|national id|linkedin|github|portfolio|website|\burl\b|e-?mail|phone|mobile|whatsapp/;
+  var PERSONAL_RE = /date of birth|\bdob\b|birth ?date|aadhaa?r|\bpan\b|passport|social security|\bssn\b|national id|linkedin|github|portfolio|website|\burl\b|e-?mail|phone|mobile|whatsapp|postal|zip ?code|\bpin ?code|street|address|house (no|number)/;
+
+  // Demographic questions: never answered by the AI (decline option, or your Profile, or skip)
+  var EEO_RE = /gender|\bsex\b|race|ethnic|hispanic|latino|veteran|disabilit|sexual orientation|pronoun|transgender/;
+
+  // A country named in the question that is not yours ("authorized to work in the United States")
+  var COUNTRY_RE = /\b(united states|u\.s\.a?\.?|usa|america|canada|united kingdom|\buk\b|england|ireland|germany|france|netherlands|spain|europe|european union|\beu\b|australia|new zealand|singapore|uae|united arab emirates|dubai|saudi|qatar|japan|india)\b/;
+  function foreignCountryIn(l, p) {
+    // "in the US" / "within the US" (plain "us" elsewhere is the pronoun: "tell us")
+    l = l.replace(/\b(in|within|the|for) us\b/g, '$1 united states');
+    var m = l.match(COUNTRY_RE);
+    if (!m) return false;
+    var mine = (p.country || 'India').toLowerCase();
+    var c = m[1].replace(/\./g, '');
+    var alias = { 'us': 'united states', 'usa': 'united states', 'usa ': 'united states', 'america': 'united states', 'uk': 'united kingdom', 'england': 'united kingdom', 'uae': 'united arab emirates', 'dubai': 'united arab emirates' };
+    c = alias[c] || c;
+    return c !== mine;
+  }
 
   function ruleAnswer(field, p) {
     // "Please select your total years of experience:" -> "total years of experience"
@@ -581,10 +607,18 @@
       }
     }
 
-    // EEO / demographic questions -> decline if possible
-    if (/gender|race|ethnic|veteran|disabilit|sexual orientation|pronoun/.test(l) && hasOpts) {
-      var dec = pickOption(field.options, /decline|prefer not|don.?t wish|not to (say|disclose|answer)|rather not/i);
+    // EEO / demographic questions -> decline if possible, else your Profile, else nothing (skip job)
+    if (EEO_RE.test(l) && hasOpts) {
+      var dec = pickOption(field.options, /decline|prefer not|don.?t wish|do not wish|not to (say|disclose|answer|identify)|rather not|choose not/i);
       if (dec) return dec;
+      if (/veteran/.test(l)) {
+        var nv = pickOption(field.options, /not a (protected )?veteran|i am not a veteran|^no\b/i);
+        if (nv) return nv;
+      }
+      if (/gender|\bsex\b/.test(l) && p.gender) {
+        var g = pickOption(field.options, new RegExp('^' + p.gender.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+        if (g) return g;
+      }
     }
 
     if (kind === 'checkbox') {
@@ -604,6 +638,8 @@
       if (/portfolio|website|personal (site|url)/.test(l)) return p.portfolioUrl || p.githubUrl || null;
       if (/^(city|location|current location)|where are you (currently )?(based|located)|current city/.test(l)) return p.city || null;
       if (/date of birth|\bdob\b|birth ?date/.test(l)) return p.dob || null;
+      if (/postal|zip ?code|\bpin ?code/.test(l)) return p.postalCode || null;
+      if (/street|address|house (no|number)/.test(l) && !/e-?mail/.test(l)) return p.streetAddress || null;
       if (/last working day|joining date|date of joining|start date|join(ing)? by|available (to|from)|earliest (start|joining)|when can you (join|start)/.test(l) && !/how many|days/.test(l)) {
         return formatDate(joinDate(p), field);
       }
@@ -659,8 +695,10 @@
     if (kind === 'radio' || kind === 'select') {
       // Resume picker: options are file names -> LinkedIn lists the most recent first
       if (hasOpts && field.options.every(function(o) { return /\.(pdf|docx?)\b/i.test(o); })) return field.options[0];
-      if (/sponsor/.test(l)) return yesNo(field, p.needSponsorship);
-      if (/authori[sz]ed|legally (allowed|eligible|able)|right to work|work permit|eligible to work/.test(l)) return yesNo(field, p.workAuthorized);
+      // Work authorization / sponsorship for ANOTHER country than yours -> not authorized, needs sponsorship
+      var foreign = foreignCountryIn(l, p);
+      if (/sponsor/.test(l)) return yesNo(field, foreign ? 'Yes' : p.needSponsorship);
+      if (/authori[sz]ed|legally (allowed|eligible|able|permitted)|right to work|work permit|eligible to work/.test(l)) return yesNo(field, foreign ? 'No' : p.workAuthorized);
       if (/relocat/.test(l)) return yesNo(field, p.willingRelocate);
       if (/commut|on-?site|in.office|hybrid|work from (the )?office|in person/.test(l)) return yesNo(field, p.onsiteOk);
       if (/background check|drug (test|screen)|18 years|eighteen/.test(l)) return yesNo(field, 'Yes');
@@ -700,6 +738,9 @@
       // Rejected by the form: a decimal that must be whole (3.5 -> 4) is fixed without the LLM
       var fixed = fixNumberForError(field, r);
       if (fixed !== r) return { answer: fixed, source: 'profile' };
+    }
+    if (EEO_RE.test(field.label.toLowerCase())) {
+      throw new Error('"' + field.label + '" has no "prefer not to say" option (set Gender in your Profile if you want it answered)');
     }
     // (Only free-text fields: a Yes/No "Do you have a portfolio?" is fine for the LLM)
     if (!(field.options && field.options.length) && PERSONAL_RE.test(field.label.toLowerCase())) {
@@ -794,11 +835,51 @@
     await chrome.debugger.sendCommand(t, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: x, y: y, button: 'left', clickCount: 1 });
   }
 
+  // Short alert sound in the side panel so you notice the robot check
+  function beep() {
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.35].forEach(function(at) {
+        var o = ctx.createOscillator(), g = ctx.createGain();
+        o.frequency.value = 880; g.gain.value = 0.15;
+        o.connect(g); g.connect(ctx.destination);
+        o.start(ctx.currentTime + at); o.stop(ctx.currentTime + at + 0.2);
+      });
+    } catch (e) {}
+  }
+
+  // Indeed's "I'm not a robot" checkbox: the bot never touches it. It shows you the tab and waits
+  // (up to 3 minutes) until you have ticked it and Submit is enabled - or you submitted yourself.
+  async function waitForRobotCheck() {
+    ui.log('  ✋ Indeed wants a human check: tick "I\'m not a robot" in the tab (the bot submits right after).', 'error');
+    try {
+      var tab = await chrome.tabs.update(state.formTabId, { active: true });
+      if (tab && tab.windowId !== undefined) await chrome.windows.update(tab.windowId, { focused: true });
+    } catch (e) {}
+    beep();
+    for (var i = 0; i < 180 && !state.stop; i++) {
+      await sleep(1000);
+      if (i === 60 || i === 120) beep();
+      var st;
+      try { st = await formCall('submitState'); } catch (e) { continue; }
+      if (st.submitted) return 'submitted';
+      if (st.submit && !st.disabled) { ui.log('  Thanks – submitting.', 'info'); return 'ready'; }
+    }
+    return 'timeout';
+  }
+
   // Press Next/Continue/Review/Submit. Returns { ok, clicked: 'next'|'submit'|'submit-ready' }
   async function pressPrimary(allowSubmit) {
     if (!state.site.trustedClicks) return formCall('clickPrimary', allowSubmit);
     await dbgAttach(state.formTabId); // before measuring: attaching moves the page
     var t = await formCall('primaryTarget', allowSubmit);
+    if (t.clicked === 'needs-human') {
+      var human = await waitForRobotCheck();
+      if (human === 'submitted') return { ok: true, clicked: 'submit' };
+      if (human !== 'ready') return { ok: false, clicked: null, message: 'Robot check ("I\'m not a robot") was not completed within 3 minutes' };
+      t = await formCall('primaryTarget', allowSubmit);
+      if (t.clicked === 'needs-human') return { ok: false, clicked: null, message: 'Submit stayed disabled after the robot check' };
+    }
     if (!t.ok || t.clicked === 'submit-ready') return t;
     await trustedClick(state.formTabId, t.x, t.y);
     return t;
@@ -813,6 +894,13 @@
       if (done.ok || !state.site.trustedClicks) return done;
       var t;
       try { t = await formCall('primaryTarget', true); } catch (e) { return done; }
+      if (t.clicked === 'needs-human') {
+        // The robot check appeared only after the first Submit
+        var human = await waitForRobotCheck();
+        if (human === 'submitted') continue;
+        if (human !== 'ready') return { ok: false, message: 'Robot check ("I\'m not a robot") was not completed within 3 minutes' };
+        try { t = await formCall('primaryTarget', true); } catch (e) { return done; }
+      }
       if (!t.ok || t.clicked !== 'submit') return done;
       ui.log('  Submit did not register, clicking it again…');
       await trustedClick(state.formTabId, t.x, t.y);
@@ -1299,6 +1387,7 @@
     _resolveAnswer: resolveAnswer,
     _answerWithLLM: answerWithLLM,
     _expectsNumber: expectsNumber,
+    _indeedDomain: indeedDomain,
     _linkedinGeoId: linkedinGeoId
   };
 })();
