@@ -230,14 +230,16 @@ input[type="file"] { display: none; }
         <select data-s="sites" title="Where to apply" style="width:auto;flex:0 0 auto">
           <option value="linkedin">LinkedIn</option>
           <option value="indeed">Indeed</option>
+          <option value="naukri">Naukri</option>
           <option value="both">LinkedIn + Indeed</option>
+          <option value="all">LinkedIn + Indeed + Naukri</option>
         </select>
         <button class="btn primary" id="aaStart">Start applying</button>
         <button class="btn danger" id="aaStop" style="display:none">Stop</button>
       </div>
       <div class="stats" id="aaStats"></div>
       <div id="aaConfirm"></div>
-      <div class="log" id="aaLog"><div class="info">Fill in your Profile once, pick a mode, and press Start. Pick LinkedIn, Indeed or both, then press Start. Keep this panel open and the Chrome window visible (not minimized) while it runs.</div></div>
+      <div class="log" id="aaLog"><div class="info">Fill in your Profile once, pick a mode, and press Start. Pick LinkedIn, Indeed, Naukri or several, then press Start. Keep this panel open and the Chrome window visible (not minimized) while it runs.</div></div>
 
       <details id="secRun" open>
         <summary>Run settings</summary>
@@ -265,6 +267,7 @@ input[type="file"] { display: none; }
           <label class="f">Location<select data-s="location" id="aaLocation"></select></label>
           <label class="f">Custom geoId (optional)<input type="text" data-s="customGeoId" placeholder="from a LinkedIn URL"></label>
           <label class="f full">Indeed city / area (optional)<input type="text" data-s="indeedLocation" placeholder="e.g. Delhi, Bengaluru, Remote – empty = whole country"></label>
+          <label class="f full">Naukri city (optional)<input type="text" data-s="naukriLocation" placeholder="e.g. Delhi NCR, Bengaluru, Remote – empty = all of India"></label>
           <label class="f">Date posted
             <select data-s="datePosted">
               <option value="r86400">Past 24 hours</option>

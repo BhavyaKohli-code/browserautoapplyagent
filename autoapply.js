@@ -1,4 +1,4 @@
-// Auto Apply orchestrator for LinkedIn Easy Apply and Indeed "Easily apply". Runs inside the
+// Auto Apply orchestrator for LinkedIn Easy Apply, Indeed "Easily apply" and Naukri. Runs inside the
 // side panel page (which, unlike the MV3 service worker, stays alive for long runs and can
 // call Ollama directly).
 //
@@ -36,8 +36,9 @@
     minDelay: 8,
     maxDelay: 20,
     fitCheck: false,
-    sites: 'linkedin', // linkedin | indeed | both
-    indeedLocation: ''
+    sites: 'linkedin', // linkedin | indeed | naukri | both (LinkedIn + Indeed) | all
+    indeedLocation: '',
+    naukriLocation: ''
   };
 
   var DEFAULT_PROFILE = {
@@ -58,6 +59,7 @@
     formTabId: null,
     site: null,
     settings: null,
+    profile: null,
     applied: 0,
     skipped: 0,
     pendingConfirm: null
@@ -115,12 +117,22 @@
       seenKey: function(id) { return 'indeed:' + id; },
       jobUrl: function(id, s) { return 'https://' + (INDEED_DOMAINS[s.location] || 'in.indeed.com') + '/viewjob?jk=' + id; },
       searchUrl: function(s, k) { return buildIndeedUrl(s, k); }
+    },
+    // Naukri: each job opens in its own tab; applying happens there through a chatbot
+    // (applyNaukri) instead of a form with a Submit step.
+    naukri: {
+      name: 'Naukri', file: 'naukri-dom.js', ns: '__nkAA', applyInNewTab: true, chatApply: true,
+      tabQuery: 'https://www.naukri.com/*', home: 'https://www.naukri.com/',
+      seenKey: function(id) { return 'naukri:' + id; },
+      jobUrl: function(id) { return 'https://www.naukri.com/job-listings-' + id; },
+      searchUrl: function(s, k) { return buildNaukriUrl(s, k); }
     }
   };
 
   function siteFor(url) {
     if (/linkedin\.com/.test(url)) return SITES.linkedin;
     if (/indeed\.com/.test(url)) return SITES.indeed;
+    if (/naukri\.com/.test(url)) return SITES.naukri;
     return state.site;
   }
 
@@ -172,7 +184,7 @@
 
   async function getSiteTab(site) {
     var tabs = await chrome.tabs.query({ url: site.tabQuery, currentWindow: true });
-    tabs = tabs.filter(function(t) { return !/smartapply\./.test(t.url || ''); });
+    tabs = tabs.filter(function(t) { return !/smartapply\.|\/job-listings-/.test(t.url || ''); });
     if (tabs.length) return tabs[0].id;
     var t = await chrome.tabs.create({ url: site.home || 'about:blank', active: true });
     await waitForLoad(t.id);
@@ -205,6 +217,25 @@
     if (wt.remote && !wt.onsite && !wt.hybrid) p.set('sc', '0kf:attr(DSQF7);');
     p.set('sort', 'date');
     return 'https://' + domain + '/jobs?' + p.toString();
+  }
+
+  // naukri.com/<keyword>-jobs-in-<city>?k=..&l=..&experience=N&jobAge=D&wfhType=..
+  function buildNaukriUrl(settings, keyword) {
+    var slug = function(x) { return x.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); };
+    var loc = (settings.naukriLocation || '').trim();
+    var p = new URLSearchParams();
+    p.set('k', keyword);
+    if (loc) p.set('l', loc);
+    var yrs = Math.floor(parseFloat(state.profile && state.profile.totalYears));
+    if (!isNaN(yrs)) p.set('experience', String(yrs)); // jobs whose experience range includes yours
+    var days = { r86400: '1', r604800: '7', r2592000: '30' }[settings.datePosted];
+    if (days) p.set('jobAge', days);
+    var wt = settings.workType, w = [];
+    if (wt.onsite) w.push('0');
+    if (wt.remote) w.push('2');
+    if (wt.hybrid) w.push('3');
+    if (w.length && w.length < 3) w.forEach(function(x) { p.append('wfhType', x); });
+    return 'https://www.naukri.com/' + slug(keyword) + '-jobs' + (loc ? '-in-' + slug(loc) : '') + '?' + p.toString();
   }
 
   function buildSearchUrl(settings, keyword) {
@@ -434,6 +465,22 @@
     return best;
   }
 
+  function pickNoticeOption(options, days) {
+    var inDays = options.map(function(o) {
+      var r = optionRange(o);
+      if (!r || /serving/i.test(o)) return null;
+      var mult = /month/i.test(o) ? 30 : /week/i.test(o) ? 7 : 1;
+      return [r[0] * mult, r[1] * mult];
+    });
+    var best = null, bestDist = Infinity;
+    inDays.forEach(function(r, i) {
+      if (!r) return;
+      var d = days < r[0] ? r[0] - days : days > r[1] ? days - r[1] : 0;
+      if (d < bestDist) { best = options[i]; bestDist = d; }
+    });
+    return best;
+  }
+
   function hasNumericOptions(options) {
     return (options || []).filter(function(o) { return optionRange(o); }).length >= 2;
   }
@@ -459,9 +506,17 @@
     // "Please select your total years of experience:" -> "total years of experience"
     var l = field.label.toLowerCase()
       .replace(/^(please |kindly )?(select|enter|mention|provide|specify|share|state|confirm)( your| the)?\s+/, '')
+      .replace(/^(what is|what's|what are) (your|the) /, '')
       .replace(/[\s:.?*]+$/, '').trim();
     var kind = field.kind;
     var hasOpts = field.options && field.options.length;
+
+    // Notice-period options mix units ("15 Days or less", "1 Month", "3 Months") -> compare in days
+    if ((kind === 'select' || kind === 'radio') && hasOpts && /notice/.test(l) && p.noticeDays &&
+        field.options.some(function(o) { return /month|week/i.test(o); })) {
+      var noticeOpt = pickNoticeOption(field.options, parseFloat(p.noticeDays));
+      if (noticeOpt) return noticeOpt;
+    }
 
     // Dropdowns/radios whose options are numeric ranges: work out the number with the text rules,
     // then pick the matching range (e.g. 14 LPA -> "14 - 15 LPA", 3.5 years -> "3 years")
@@ -804,6 +859,133 @@
     return { status: 'skipped', reason: 'Too many pages', qa: qa };
   }
 
+  // ---------- Naukri (chatbot apply) ----------
+  // Naukri has no review step: pressing Apply either applies at once or opens a chatbot whose
+  // last answer submits. So "dry run" never presses Apply, and "ask me" asks before pressing it.
+  // Leaving the chatbot (closing the tab) before the last answer means nothing is submitted.
+  var NAUKRI_KIND = { chips: 'radio', radio: 'radio', checkboxes: 'checkboxes', text: 'text' };
+
+  async function waitChat(oldStep, seconds) {
+    var st = { state: 'waiting' };
+    for (var i = 0; i < seconds * 2 && !state.stop; i++) {
+      await sleep(500);
+      try { st = await formCall('readChat'); } catch (e) { continue; }
+      if (st.state === 'success' || st.state === 'quota') return st;
+      if (st.state === 'chat' && st.kind !== 'none' && st.step !== oldStep) return st;
+    }
+    return st;
+  }
+
+  async function applyNaukri(job, details, profile, settings, answers) {
+    var qa = [];
+    if (!details.applyUrl) return { status: 'skipped', reason: 'No job link', qa: qa };
+    var t = await chrome.tabs.create({ url: details.applyUrl, active: true });
+    state.formTabId = t.id;
+    await waitForLoad(t.id);
+
+    var js = null;
+    for (var i = 0; i < 20; i++) {
+      await sleep(500);
+      try { js = await formCall('jobStatus'); } catch (e) { continue; }
+      if (js.status !== 'none') break;
+    }
+    await waitForHuman(state.formTabId, 'Naukri');
+    if (js && js.status === 'login') { await finishForm(); throw new Error('You are logged out of Naukri. Log in, then press Start again.'); }
+    if (js && js.quota) { await finishForm(); throw new Error('Naukri says the daily apply limit is reached.'); }
+    var why = !js || js.status === 'none' ? 'No Apply button on the job page'
+      : js.status === 'applied' ? 'Already applied'
+      : js.status === 'company' ? 'Applies on the company website (not on Naukri)' : '';
+    if (why) { await finishForm(); return { status: 'skipped', reason: why, qa: qa }; }
+
+    if (settings.fitCheck) {
+      try {
+        var fit = await checkFit(profile, job, js.description);
+        if (!fit.fit) { await finishForm(); return { status: 'skipped', reason: 'AI fit check: ' + fit.reason, qa: qa }; }
+        ui.log('  Fit: ' + fit.reason, 'info');
+      } catch (e) { ui.log('  Fit check failed (' + e.message + '), applying anyway', 'error'); }
+    }
+
+    if (settings.mode === 'dry') {
+      await finishForm();
+      return { status: 'dry-run', reason: 'Naukri Apply button found – not pressed (Naukri submits on click)', qa: qa };
+    }
+    if (settings.mode === 'confirm') {
+      var decision = await ui.confirm(job, qa, {
+        action: 'Apply',
+        note: 'Naukri submits as soon as Apply is pressed, or when its chatbot\'s last question is answered. ' +
+          'Chatbot questions are answered automatically from your profile, saved answers and the local AI.'
+      });
+      if (decision === 'manual') { await finishForm(); return { status: 'applied', reason: 'Applied manually', qa: qa }; }
+      if (decision !== 'submit') {
+        await finishForm();
+        return { status: 'skipped', reason: decision === 'stop' ? 'Stopped by user' : 'Skipped by you', qa: qa };
+      }
+    }
+
+    var c = await formCall('clickApply', false);
+    if (!c.ok) { await finishForm(); return { status: 'skipped', reason: c.message, qa: qa }; }
+    var st = await waitChat(null, 6);
+    if (st.state === 'waiting' && !state.stop) {
+      // The page ignored the script click -> press Apply with a real mouse click
+      await dbgAttach(state.formTabId);
+      var pos = await formCall('clickApply', true);
+      if (pos.ok) await trustedClick(state.formTabId, pos.x, pos.y);
+      st = await waitChat(null, 10);
+    }
+
+    var lastStep = null, sameCount = 0;
+    for (var n = 0; n < 30; n++) {
+      if (state.stop) { await finishForm(); return { status: 'stopped', reason: 'Stopped by user (chatbot left unfinished, nothing submitted)', qa: qa }; }
+      if (st.state === 'success') { await finishForm(); return { status: 'applied', reason: '', qa: qa }; }
+      if (st.state === 'quota') { await finishForm(); throw new Error('Naukri says the daily apply limit is reached.'); }
+      if (st.state !== 'chat' || st.kind === 'none') {
+        await finishForm();
+        return { status: 'unknown', reason: 'No confirmation or chatbot question after Apply', qa: qa };
+      }
+
+      if (st.step === lastStep) sameCount++; else sameCount = 0;
+      lastStep = st.step;
+      if (sameCount >= 2) {
+        await finishForm();
+        return { status: 'skipped', reason: 'Chatbot did not accept an answer to "' + st.question.slice(0, 80) + '" (left unfinished, nothing submitted)', qa: qa };
+      }
+
+      var field = {
+        key: 'chat', kind: NAUKRI_KIND[st.kind] || 'text', label: st.question, options: st.options || null,
+        required: true, value: '', context: st.context || '', placeholder: st.placeholder || '',
+        error: sameCount > 0 ? 'The chatbot did not accept the previous answer' : ''
+      };
+      var res;
+      try {
+        res = await resolveAnswer(field, profile, answers, job, sameCount > 0);
+      } catch (e) {
+        if (st.canSkip) {
+          ui.log('  ✗ "' + st.question.slice(0, 60) + '": ' + e.message + ' – skipping the question', 'error');
+          await formCall('answerChat', 'chips', 'Skip');
+          st = await waitChat(st.step, 15);
+          continue;
+        }
+        await finishForm();
+        return { status: 'skipped', reason: e.message + ' (chatbot left unfinished, nothing submitted)', qa: qa };
+      }
+      var fill = await formCall('answerChat', st.kind, res.answer);
+      var shown = Array.isArray(res.answer) ? res.answer.join(', ') : String(res.answer);
+      ui.log('  ' + st.question.slice(0, 70) + ' → ' + shown.slice(0, 60) + ' [' + res.source + ']' + (fill.ok ? '' : ' ✗ ' + fill.message), fill.ok ? 'qa' : 'error');
+      qa.push({ q: st.question, a: shown, source: res.source });
+      if (!fill.ok && res.source !== 'ai') {
+        try {
+          var retry = await answerWithLLM(field, profile, job, 'The answer "' + shown + '" did not match the options.');
+          await formCall('answerChat', st.kind, retry);
+          ui.log('  ↳ retried → ' + String(retry).slice(0, 60) + ' [ai]', 'qa');
+        } catch (e) {}
+      }
+      await save('aaAnswers', answers);
+      st = await waitChat(st.step, 15);
+    }
+    await finishForm();
+    return { status: 'skipped', reason: 'Too many chatbot questions (left unfinished)', qa: qa };
+  }
+
   // ---------- main loop ----------
   function listFromCsv(s) {
     return (s || '').split(/[,\n]/).map(function(x) { return x.trim().toLowerCase(); }).filter(Boolean);
@@ -812,7 +994,7 @@
   async function recordResult(job, result, history, seen) {
     var site = state.site;
     history.unshift({
-      id: job.id, site: site.name, url: site.jobUrl(job.id, state.settings), title: job.title, company: job.company,
+      id: job.id, site: site.name, url: job.url || site.jobUrl(job.id, state.settings), title: job.title, company: job.company,
       status: result.status, reason: result.reason || '', qa: result.qa || [], ts: Date.now()
     });
     if (history.length > 500) history.length = 500;
@@ -830,6 +1012,7 @@
     var history = await load('aaHistory', []);
     var seen = await load('aaSeen', {});
     state.settings = settings;
+    state.profile = profile;
 
     // One-time cleanup (v0.7): AI-made answers for things profile rules now handle - salary,
     // URLs, dates, contact data - were sometimes wrong (e.g. "140 - 145 LPA"); drop them.
@@ -853,7 +1036,9 @@
       return;
     }
 
-    var siteKeys = settings.sites === 'both' ? ['linkedin', 'indeed'] : [SITES[settings.sites] ? settings.sites : 'linkedin'];
+    var siteKeys = settings.sites === 'both' ? ['linkedin', 'indeed']
+      : settings.sites === 'all' ? ['linkedin', 'indeed', 'naukri']
+      : [SITES[settings.sites] ? settings.sites : 'linkedin'];
 
     state.running = true;
     state.stop = false;
@@ -937,7 +1122,7 @@
             continue;
           }
 
-          if (settings.fitCheck) {
+          if (settings.fitCheck && !site.chatApply) { // Naukri checks fit on the job page
             try {
               var fit = await checkFit(profile, job, details.description);
               if (!fit.fit) {
@@ -951,7 +1136,8 @@
 
           var result;
           try {
-            result = await applyToJob(job, details, profile, settings, answers);
+            result = site.chatApply ? await applyNaukri(job, details, profile, settings, answers)
+              : await applyToJob(job, details, profile, settings, answers);
           } catch (e) {
             result = { status: 'skipped', reason: 'Error: ' + e.message, qa: [] };
             try { await discardForm(); } catch (e2) {}
@@ -1004,6 +1190,7 @@
     stop: stop,
     buildSearchUrl: buildSearchUrl,
     buildIndeedUrl: buildIndeedUrl,
+    buildNaukriUrl: buildNaukriUrl,
     // exported for testing
     _ruleAnswer: ruleAnswer,
     _resolveAnswer: resolveAnswer,

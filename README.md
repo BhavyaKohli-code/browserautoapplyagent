@@ -14,7 +14,7 @@ Inspired by Claude's browser extension, but using your own local models.
 - Loop detection to prevent getting stuck
 - Auto tab creation when no webpage is open
 - Multiple model support via Ollama
-- **Auto Apply** for LinkedIn Easy Apply and Indeed "Easily apply" jobs (local LLM answers form questions)
+- **Auto Apply** for LinkedIn Easy Apply, Indeed "Easily apply" and Naukri jobs (local LLM answers form questions)
 
 ## Quick start (5 minutes)
 
@@ -156,10 +156,11 @@ saved there override the file.
 
 Click the paperclip icon to attach PDFs or text files. The agent will extract and analyze the content.
 
-## Auto Apply (LinkedIn + Indeed)
+## Auto Apply (LinkedIn + Indeed + Naukri)
 
 The **Auto Apply** tab applies to quick-apply jobs for you, 100% locally: LinkedIn **Easy Apply**
-and Indeed **Easily apply**. Pick LinkedIn, Indeed or both next to the Start button.
+Indeed **Easily apply** and **Naukri** Apply. Pick one site, LinkedIn + Indeed, or all three next to
+the Start button.
 
 How it works: deterministic page helpers (`linkedin-dom.js`, `indeed-dom.js`) drive each site —
 search, job cards, the apply form, Next/Continue/Submit. The local LLM is only asked to answer form
@@ -171,11 +172,11 @@ Answer priority: your saved/edited answers → profile rules (name, phone, CTC, 
 sponsorship, years of experience…) → local LLM (reads your profile + resume).
 Your default profile lives in `profile-default.js`; anything edited in the panel overrides it.
 
-1. Be logged in to LinkedIn / Indeed in this Chrome profile.
+1. Be logged in to LinkedIn / Indeed / Naukri in this Chrome profile.
 2. Open the side panel → **Auto Apply**.
 3. Check **Profile** (prefilled from `profile-default.js`).
 4. Set **Job search** (titles one per line, location, date posted, work type, experience;
-   optional Indeed city).
+   optional Indeed city and Naukri city).
 5. Pick a **Mode**:
    - *Dry run* – fills every form up to Submit, then discards. Do this first.
    - *Ask me before each submit* – shows the answers, you click Submit / Skip.
@@ -203,6 +204,23 @@ Answer safety:
   Profile – the AI is not allowed to guess it. If a form requires one you haven't filled in, that
   job is skipped and the log says which field to add.
 - Number dropdowns ("14 - 15 LPA", "3 years") are picked by arithmetic, not by the AI.
+
+Naukri notes:
+- Naukri has **no review/Submit step**: pressing Apply either applies immediately or opens a
+  recruiter chatbot on the right, and answering its last question submits. So on Naukri:
+  - *Dry run* only checks that the job has a Naukri Apply button (not "Apply on company site") –
+    it never presses Apply.
+  - *Ask me before each submit* asks before pressing **Apply**; the chatbot questions are then
+    answered automatically (profile → saved answers → local AI), and each answer is logged.
+  - If the bot can't answer a chatbot question it leaves the chat unfinished and closes the tab –
+    nothing is submitted.
+- Each job opens in its own tab (Naukri's job pages), which is closed afterwards.
+- Jobs that only "Apply on company site" are skipped. Naukri has a daily apply limit; the run
+  stops when Naukri says it's reached.
+- Search uses `naukri.com/<keyword>-jobs-in-<city>` with your total experience, date posted
+  (1/7/30 days) and work type (office / remote / hybrid).
+- Run a few jobs in *Ask me* mode first and watch the chatbot – Naukri's page markup was
+  modelled, not yet verified on a live run.
 
 General notes:
 - Jobs whose forms it can't complete are discarded and logged, never half-submitted.
@@ -232,6 +250,7 @@ For open-ended browsing tasks bigger models help. Auto Apply works well with `qw
 - `pdf-extract.js` - PDF text extraction using pdf.js
 - `linkedin-dom.js` - LinkedIn page helpers (job cards, Easy Apply modal, form reading/filling)
 - `indeed-dom.js` - Indeed page helpers (search results, smartapply form steps)
+- `naukri-dom.js` - Naukri page helpers (search results, job page Apply, recruiter chatbot)
 - `profile-default.js` - your default Auto Apply profile (edit this with your details)
 - `autoapply.js` - Auto Apply orchestrator + answer engine (runs in the side panel)
 - `autoapply-ui.js` - Auto Apply settings, log, saved answers and history UI
