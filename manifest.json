@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Ollama Browser Agent",
-  "version": "0.4.0",
-  "description": "AI browser agent powered by local Ollama models",
+  "version": "0.7.1",
+  "description": "Local-LLM browser agent with LinkedIn + Indeed auto-apply (Ollama)",
   "permissions": [
     "activeTab",
     "scripting",
     "tabs",
     "storage",
-    "sidePanel"
+    "sidePanel",
+    "debugger"
   ],
   "host_permissions": [
     "http://localhost:11434/*",
@@ -19,8 +20,15 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["register-tab.js", "accessibility-tree.js", "visual-indicator.js"],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "register-tab.js",
+        "accessibility-tree.js",
+        "visual-indicator.js"
+      ],
       "run_at": "document_idle",
       "all_frames": false
     }
@@ -33,8 +41,14 @@
   },
   "web_accessible_resources": [
     {
-      "matches": ["<all_urls>"],
-      "resources": ["sidepanel.html", "pdf.min.mjs", "pdf.worker.min.mjs"]
+      "matches": [
+        "<all_urls>"
+      ],
+      "resources": [
+        "sidepanel.html",
+        "pdf.min.mjs",
+        "pdf.worker.min.mjs"
+      ]
     }
   ],
   "content_security_policy": {

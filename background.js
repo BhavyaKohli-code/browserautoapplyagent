@@ -1,5 +1,5 @@
 var OLLAMA_URL = 'http://localhost:11434';
-var DEFAULT_MODEL = 'qwen2.5:7b';
+var DEFAULT_MODEL = 'qwen2.5:7b-instruct';
 
 var CHAT_SYSTEM = 'You are an AI browser agent. You control a web browser.\n\nWhen the user asks you to do something on the web, respond with a plan starting with "PLAN:".\n\nBe SPECIFIC. Use real URLs. Never say "search for the website" - navigate directly.\n\nExample - user says "find jobs on linkedin":\nPLAN:\n1. Navigate to https://www.linkedin.com/jobs\n2. Click the search box\n3. Type the job search query\n4. Click search button\n5. Browse and click on interesting results\n\nExample - user says "search for cats on google":\nPLAN:\n1. Navigate to https://www.google.com\n2. Click the search box\n3. Type "cats"\n4. Click Google Search button\n\nIf the user asks a question (not a web task), answer briefly.\nIf the user shares a file, summarize it.\nKeep responses under 80 words.';
 
@@ -220,7 +220,7 @@ async function getPageState(tabId) {
   await new Promise(function(r) { setTimeout(r, 500); });
   var results = await chrome.scripting.executeScript({
     target: { tabId: tabId },
-    func: function() { return window.__generateAccessibilityTree('all', 12, 15000); }
+    func: function() { return window.__generateAccessibilityTree('all', 12, 60000); }
   });
   if (!results || !results[0] || !results[0].result) {
     return { error: 'Failed to read page.', tree: '' };
@@ -569,6 +569,12 @@ chrome.tabs.onActivated.addListener(function(info) {
 
 // Listen for tab registrations from content scripts
 chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
+  // "Stop Agent" button on the page (visual-indicator.js). The side panel also listens for
+  // this to stop LinkedIn Auto Apply.
+  if (msg.type === 'stop_task') {
+    activeTask = null;
+    if (activeTabId) showIndicator(activeTabId, false);
+  }
   if (msg.type === 'register_tab' && sender.tab) {
     var tabId = sender.tab.id;
     knownTabs[tabId] = { url: msg.url, title: msg.title };
