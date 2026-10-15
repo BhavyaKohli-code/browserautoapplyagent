@@ -176,6 +176,7 @@ async function queryOllama(messages) {
         model: currentModel,
         messages: messages,
         stream: false,
+        think: false,
         options: { temperature: 0.3, num_predict: 1024 }
       }),
       signal: controller.signal

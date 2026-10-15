@@ -316,8 +316,10 @@
           model: currentModel(),
           stream: false,
           keep_alive: '30m',
+          // Qwen3 "thinks" by default: ~10x more tokens per answer, minutes per form on a laptop CPU
+          think: false,
           format: schema,
-          options: { temperature: 0, num_ctx: 8192 },
+          options: { temperature: 0, num_ctx: 4096 },
           messages: [{ role: 'system', content: system }, { role: 'user', content: user }]
         }),
         signal: controller.signal
