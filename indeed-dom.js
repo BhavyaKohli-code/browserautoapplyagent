@@ -88,7 +88,7 @@
     a.scrollIntoView({ block: 'center' });
     await sleep(300);
     var want = norm(a.innerText).slice(0, 30);
-    a.click();
+    await window.__humanAA.clickEl(a);
     // Wait until the detail pane shows this job and its apply button has rendered
     for (var i = 0; i < 25; i++) {
       await sleep(300);
@@ -299,7 +299,7 @@
       if (!members.length) return { ok: false, message: 'Field gone' };
       if (kind === 'checkbox') {
         var want = answer === true || /^(yes|true|checked|agree|y|1)$/i.test(String(answer));
-        if (members[0].checked !== want) members[0].click();
+        if (members[0].checked !== want) await window.__humanAA.clickEl(members[0]);
         return { ok: true };
       }
       var opts = members.map(optionText);
@@ -308,7 +308,7 @@
       for (var j = 0; j < answers.length; j++) {
         var idx = matchOption(opts, answers[j]);
         if (idx >= 0) {
-          if (!members[idx].checked) members[idx].click();
+          if (!members[idx].checked) await window.__humanAA.clickEl(members[idx]);
           hit = true;
           if (kind === 'radio') break;
         }
@@ -324,19 +324,21 @@
       var texts = Array.prototype.slice.call(el.options).map(function(o) { return norm(o.text); });
       var k = matchOption(texts.map(function(t) { return PLACEHOLDER_RE.test(t) ? '\u0000' : t; }), answer);
       if (k < 0) return { ok: false, message: 'No option matches "' + answer + '"' };
+      await window.__humanAA.clickEl(el);
+      await sleep(300 + Math.random() * 400);
       setNativeValue(el, el.options[k].value);
       return { ok: true };
     }
 
-    el.focus();
-    setNativeValue(el, String(answer));
+    await window.__humanAA.clickEl(el);
+    await window.__humanAA.typeInto(el, String(answer));
     if (kind === 'typeahead') {
       for (var w = 0; w < 10; w++) {
         await sleep(300);
         var lbId = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
         var lb = lbId ? document.getElementById(lbId) : null;
         var opt = (lb || document).querySelector('[role=option]');
-        if (opt && visible(opt)) { opt.click(); await sleep(300); return { ok: true }; }
+        if (opt && visible(opt)) { await window.__humanAA.clickEl(opt); await sleep(300); return { ok: true }; }
       }
     }
     el.dispatchEvent(new Event('blur', { bubbles: true }));
@@ -349,12 +351,12 @@
     if (!submit || isHoneypot(submit)) submit = buttonByText(root, /^(submit your application|submit application|submit)$/i);
     if (submit) {
       if (!allowSubmit) return { ok: true, clicked: 'submit-ready' };
-      submit.click();
+      await window.__humanAA.clickEl(submit);
       return { ok: true, clicked: 'submit' };
     }
     var cont = root.querySelector('[data-testid="continue-button"]');
     if (!cont || isHoneypot(cont)) cont = buttonByText(root, /^(continue|review your application|next)$/i);
-    if (cont) { cont.click(); return { ok: true, clicked: 'next' }; }
+    if (cont) { await window.__humanAA.clickEl(cont); return { ok: true, clicked: 'next' }; }
     return { ok: false, clicked: null, message: 'No Continue/Submit button' };
   }
 

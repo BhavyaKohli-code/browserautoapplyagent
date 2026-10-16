@@ -144,9 +144,23 @@
 
   // ---------- tab / page calls ----------
   async function ensureHelpers(tabId, site) {
-    var r = await chrome.scripting.executeScript({ target: { tabId: tabId }, func: function(ns) { return !!window[ns]; }, args: [site.ns] });
+    var r = await chrome.scripting.executeScript({ target: { tabId: tabId }, func: function(ns) { return !!window[ns] && !!window.__humanAA; }, args: [site.ns] });
     if (!r[0].result) {
-      await chrome.scripting.executeScript({ target: { tabId: tabId }, files: [site.file] });
+      // human.js first: the site file uses its cursor and typing helpers
+      await chrome.scripting.executeScript({ target: { tabId: tabId }, files: ['human.js', site.file] });
+    }
+  }
+
+  // Let the cursor drift around the tab for ms milliseconds (between applications)
+  async function wanderOn(tabId, ms) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        func: function(t) { return window.__humanAA ? window.__humanAA.wander(t) : null; },
+        args: [ms]
+      });
+    } catch (e) {
+      await sleep(ms);
     }
   }
 
@@ -827,10 +841,38 @@
     chrome.debugger.onDetach.addListener(function(src) { delete attached[src.tabId]; });
   }
 
+  // Glide the real mouse from the page's drawn cursor (or a random point) to (x, y) along a curve
+  async function trustedMove(tabId, x, y) {
+    var t = { tabId: tabId };
+    var from = null;
+    try {
+      var r = await chrome.scripting.executeScript({ target: { tabId: tabId }, func: function() { return window.__humanAA ? window.__humanAA.cursorPos() : null; } });
+      from = r[0].result;
+    } catch (e) {}
+    if (!from) from = { x: x + (Math.random() - 0.5) * 400, y: y + (Math.random() - 0.5) * 300 };
+    var dist = Math.hypot(x - from.x, y - from.y);
+    var bend = (Math.random() - 0.5) * 0.5 * dist;
+    var nx = dist ? -(y - from.y) / dist : 0, ny = dist ? (x - from.x) / dist : 0;
+    var cx = (from.x + x) / 2 + nx * bend, cy = (from.y + y) / 2 + ny * bend;
+    var steps = Math.max(10, Math.min(40, Math.round(dist / 15)));
+    for (var i = 1; i <= steps; i++) {
+      var p = i / steps;
+      p = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+      var px = (1 - p) * (1 - p) * from.x + 2 * (1 - p) * p * cx + p * p * x;
+      var py = (1 - p) * (1 - p) * from.y + 2 * (1 - p) * p * cy + p * p * y;
+      await chrome.debugger.sendCommand(t, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: Math.round(px), y: Math.round(py) });
+      await sleep(10 + Math.random() * 20);
+    }
+    // Keep the drawn cursor where the real mouse ended up
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: tabId }, func: function(a, b) { if (window.__humanAA) window.__humanAA.place(a, b); }, args: [x, y] });
+    } catch (e) {}
+  }
+
   async function trustedClick(tabId, x, y) {
     await dbgAttach(tabId);
     var t = { tabId: tabId };
-    await chrome.debugger.sendCommand(t, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: x, y: y });
+    await trustedMove(tabId, x, y);
     await sleep(60 + Math.random() * 120);
     await chrome.debugger.sendCommand(t, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: x, y: y, button: 'left', clickCount: 1 });
     await sleep(40 + Math.random() * 80);
@@ -1346,7 +1388,13 @@
           if (done >= target) return;
           var delay = (parseFloat(settings.minDelay) || 5) + Math.random() * Math.max(0, (parseFloat(settings.maxDelay) || 10) - (parseFloat(settings.minDelay) || 5));
           ui.log('  waiting ' + Math.round(delay) + 's…', 'info');
-          for (var w = 0; w < delay * 2 && !state.stop; w++) await sleep(500);
+          // Move the cursor around in chunks so Stop still reacts within a couple of seconds
+          var waitUntil = Date.now() + delay * 1000;
+          while (Date.now() < waitUntil && !state.stop) {
+            var chunk = Math.min(2000, waitUntil - Date.now());
+            if (Math.random() < 0.75) await wanderOn(state.tabId, chunk);
+            else await sleep(chunk);
+          }
         }
 
         // Next page of results: Indeed through a link; LinkedIn and Naukri by clicking Next in the page

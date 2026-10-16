@@ -96,7 +96,7 @@
     if (!el) return { ok: false, message: 'Card not found' };
     el.scrollIntoView({ block: 'center' });
     await sleep(300);
-    el.click();
+    await window.__humanAA.clickEl(el);
     // Wait for the detail pane to switch to this job
     for (var i = 0; i < 20; i++) {
       await sleep(300);
@@ -112,8 +112,26 @@
     return p;
   }
 
+  // A plain "Apply" (company website) button in the detail pane, i.e. the pane has rendered its buttons
+  function externalApplyButton() {
+    var btns = document.querySelectorAll('button, a');
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i];
+      var label = norm((b.getAttribute('aria-label') || '') + ' ' + (b.innerText || ''));
+      if (/^apply\b|\bapply on company website\b/i.test(label) && !/easy apply/i.test(label) &&
+          visible(b) && !b.closest('[componentkey^="job-card-component-ref-"]')) return b;
+    }
+    return null;
+  }
+
   async function getJobDetails() {
+    // The pane's buttons can render seconds after the URL switches; checking once skipped Easy Apply jobs
     var ea = easyApplyButton();
+    for (var w = 0; w < 25 && !ea && !externalApplyButton(); w++) {
+      await sleep(300);
+      ea = easyApplyButton();
+    }
+    if (!ea) { await sleep(800); ea = easyApplyButton(); }
     // The description is lazy-loaded; scroll the detail pane until it renders
     var desc = document.querySelector('[data-testid="expandable-text-box"]');
     var anchor = ea || document.querySelector('[data-testid="lazy-column"]');
@@ -148,7 +166,7 @@
     if (!btn) btn = buttonByText(document, /^(next|siguiente)$/i);
     if (!btn) return { ok: false };
     var before = cardEls().map(cardId).join(',');
-    btn.click();
+    await window.__humanAA.clickEl(btn);
     for (var i = 0; i < 30; i++) {
       await sleep(300);
       var now = cardEls().map(cardId).join(',');
@@ -162,7 +180,7 @@
   async function openEasyApply() {
     var btn = easyApplyButton();
     if (!btn) return { ok: false, message: 'No Easy Apply button' };
-    btn.click();
+    await window.__humanAA.clickEl(btn);
     for (var i = 0; i < 25; i++) {
       await sleep(300);
       if (applyDialog()) return { ok: true };
@@ -354,7 +372,7 @@
       if (!members.length) return { ok: false, message: 'Field gone' };
       if (kind === 'checkbox') {
         var want = answer === true || /^(yes|true|checked|agree|y|1)$/i.test(String(answer));
-        if (members[0].checked !== want) members[0].click();
+        if (members[0].checked !== want) await window.__humanAA.clickEl(members[0]);
         return { ok: true };
       }
       var opts = members.map(function(m) { return optionText(m); });
@@ -363,7 +381,7 @@
       for (var j = 0; j < answers.length; j++) {
         var idx = matchOption(opts, answers[j]);
         if (idx >= 0) {
-          if (!members[idx].checked) members[idx].click();
+          if (!members[idx].checked) await window.__humanAA.clickEl(members[idx]);
           hit = true;
           if (kind === 'radio') break;
         }
@@ -379,12 +397,14 @@
       var texts = Array.prototype.slice.call(el.options).map(function(o) { return norm(o.text); });
       var k = matchOption(texts.map(function(t) { return PLACEHOLDER_RE.test(t) ? '\u0000' : t; }), answer);
       if (k < 0) return { ok: false, message: 'No option matches "' + answer + '"' };
+      await window.__humanAA.clickEl(el);
+      await sleep(300 + Math.random() * 400);
       setNativeValue(el, el.options[k].value);
       return { ok: true };
     }
 
-    el.focus();
-    setNativeValue(el, String(answer));
+    await window.__humanAA.clickEl(el);
+    await window.__humanAA.typeInto(el, String(answer));
     if (kind === 'typeahead') {
       // Pick the first suggestion LinkedIn offers
       for (var w = 0; w < 10; w++) {
@@ -393,7 +413,7 @@
         var lb = lbId ? document.getElementById(lbId) : null;
         var opt = (lb || document).querySelector('[role=option]');
         if (opt && visible(opt)) {
-          opt.click();
+          await window.__humanAA.clickEl(opt);
           await sleep(300);
           return { ok: true };
         }
@@ -416,13 +436,13 @@
       Array.prototype.slice.call(dlg.querySelectorAll('input[type=checkbox]')).forEach(function(cb) {
         if (cb.checked && /^follow\b/i.test(optionText(cb))) cb.click();
       });
-      submit.click();
+      await window.__humanAA.clickEl(submit);
       return { ok: true, clicked: 'submit' };
     }
     var review = buttonByText(dlg, /^(review|review your application|revisar)$/i);
-    if (review) { review.click(); return { ok: true, clicked: 'review' }; }
+    if (review) { await window.__humanAA.clickEl(review); return { ok: true, clicked: 'review' }; }
     var next = buttonByText(dlg, /^(next|continue|continue to next step|siguiente|continuar)$/i);
-    if (next) { next.click(); return { ok: true, clicked: 'next' }; }
+    if (next) { await window.__humanAA.clickEl(next); return { ok: true, clicked: 'next' }; }
     return { ok: false, clicked: null, message: 'No Next/Review/Submit button' };
   }
 

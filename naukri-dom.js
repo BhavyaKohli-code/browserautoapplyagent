@@ -158,7 +158,7 @@
     await sleep(400);
     var r = btn.getBoundingClientRect();
     var pos = { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
-    if (!dryMeasureOnly) btn.click();
+    if (!dryMeasureOnly) await window.__humanAA.clickEl(btn);
     return { ok: true, x: pos.x, y: pos.y };
   }
 
@@ -272,7 +272,7 @@
   async function pressSave(d) {
     for (var i = 0; i < 10; i++) {
       var b = saveButton(d);
-      if (b && !b.disabled && !/disabled/i.test(b.className)) { b.click(); return true; }
+      if (b && !b.disabled && !/disabled/i.test(b.className)) { await window.__humanAA.clickEl(b); return true; }
       await sleep(250);
     }
     return false;
@@ -288,7 +288,7 @@
       var chips = chipEls(d);
       var k = matchOption(chips.map(function(c) { return norm(c.innerText); }), answers[0]);
       if (k < 0) return { ok: false, message: 'No chip matches "' + answers[0] + '"' };
-      chips[k].click();
+      await window.__humanAA.clickEl(chips[k]);
       return { ok: true };
     }
 
@@ -302,7 +302,7 @@
         if (idx < 0) continue;
         if (!inputs[idx].checked) {
           var lab = inputs[idx].labels && inputs[idx].labels[0];
-          (lab || inputs[idx]).click();
+          await window.__humanAA.clickEl(lab || inputs[idx]);
           if (!inputs[idx].checked) inputs[idx].click();
         }
         hit = true;
@@ -315,28 +315,16 @@
 
     var input = qa('[contenteditable="true"], textarea, input[type=text], input[type=number], input:not([type])', d).filter(visible)[0];
     if (!input) return { ok: false, message: 'No text box' };
-    input.focus();
     var val = String(answers[0]);
-    if (input.isContentEditable) {
-      // execCommand goes through the editor's normal input pipeline, so React sees the text
-      document.execCommand('selectAll', false, null);
-      document.execCommand('insertText', false, val);
-      if (norm(input.innerText) !== norm(val)) {
-        input.innerText = val;
-        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: val, inputType: 'insertText' }));
-      }
-    } else {
-      var proto = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      Object.getOwnPropertyDescriptor(proto, 'value').set.call(input, val);
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    }
+    // Typed key by key; contenteditable goes through execCommand so the editor (React) sees it
+    await window.__humanAA.clickEl(input);
+    await window.__humanAA.typeInto(input, val);
     await sleep(400);
     // Some questions open a suggestion list under the box (cities, skills) - pick the first match
     var sugg = qa('[class*="suggestor"] li, [class*="sugg"] li, [role=option]', d).filter(visible);
     if (sugg.length) {
       var si = matchOption(sugg.map(function(s) { return norm(s.innerText); }), val);
-      (sugg[si >= 0 ? si : 0]).click();
+      await window.__humanAA.clickEl(sugg[si >= 0 ? si : 0]);
       await sleep(300);
     }
     return (await pressSave(d)) ? { ok: true } : { ok: false, message: 'No Save button' };
