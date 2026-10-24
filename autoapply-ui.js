@@ -26,17 +26,34 @@
     o[last] = val;
   }
 
-  function bind(attr, objGetter, storageKey) {
+  // Puts obj's values into every [attr] input (also used to refresh a form after obj changed elsewhere)
+  function fill(attr, obj) {
     document.querySelectorAll('[' + attr + ']').forEach(function(el) {
-      var path = el.getAttribute(attr);
-      var v = getPath(objGetter(), path);
+      var v = getPath(obj, el.getAttribute(attr));
       if (el.type === 'checkbox') el.checked = !!v;
       else el.value = v === undefined || v === null ? '' : String(v);
+      showRange(el);
+    });
+  }
+
+  // Sliders show their value next to the label ("3 years")
+  function showRange(el) {
+    if (el.type !== 'range') return;
+    var out = el.closest('label').querySelector('.rv');
+    if (out) out.textContent = el.value + (el.value === '1' ? ' year' : ' years');
+  }
+
+  function bind(attr, objGetter, storageKey, onChange) {
+    fill(attr, objGetter());
+    document.querySelectorAll('[' + attr + ']').forEach(function(el) {
+      var path = el.getAttribute(attr);
       el.addEventListener(el.type === 'checkbox' || el.tagName === 'SELECT' ? 'change' : 'input', function() {
         var val = el.type === 'checkbox' ? el.checked : el.value;
         if (path === 'fitCheck') val = val === 'true';
         setPath(objGetter(), path, val);
+        showRange(el);
         AA.save(storageKey, objGetter());
+        if (onChange) onChange(path);
       });
     });
   }
@@ -190,20 +207,196 @@
   });
 
   // ---------- resume upload ----------
+  async function loadResume(f) {
+    var text = await window.extractFileText(f);
+    text = text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    profile.resumeText = text;
+    document.querySelectorAll('[data-p="resumeText"], [data-o="resumeText"]').forEach(function(el) { el.value = text; });
+    await AA.save('aaProfile', profile);
+    return text;
+  }
+
   $('aaResumeFile').addEventListener('change', async function() {
     var f = this.files[0];
     this.value = '';
     if (!f) return;
     try {
-      var text = await window.extractFileText(f);
-      text = text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
-      profile.resumeText = text;
-      document.querySelector('[data-p="resumeText"]').value = text;
-      await AA.save('aaProfile', profile);
+      var text = await loadResume(f);
       log('Resume loaded (' + text.length + ' characters).', 'done');
     } catch (e) {
       log('Could not read resume: ' + e.message, 'error');
     }
+  });
+
+  // ---------- first-run profile setup ----------
+  // Until these are filled in, the panel shows the setup screen instead of the tabs
+  var REQUIRED = {
+    resumeText: 'Resume', firstName: 'First name', lastName: 'Last name', email: 'Email', city: 'City',
+    currentTitle: 'Current title', currentCompany: 'Current company', dob: 'Date of birth',
+    totalYears: 'Total years of experience', education: 'Highest education',
+    currentCtc: 'Last drawn CTC', expectedCtc: 'Expected CTC'
+  };
+
+  function missingFields(p) {
+    return Object.keys(REQUIRED).filter(function(k) {
+      var v = String(p[k] == null ? '' : p[k]).trim();
+      if (k === 'totalYears') return isNaN(parseFloat(v));
+      if (k === 'email') return !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v);
+      if (k === 'dob') return !/^\d{1,2}[\/.-]\d{1,2}[\/.-]\d{4}$/.test(v);
+      return !v;
+    });
+  }
+
+  function showSetup(on) {
+    $('viewSetup').hidden = !on;
+    document.querySelector('.tabs').hidden = on;
+    $('viewApply').hidden = on;
+    $('viewChat').hidden = on;
+    // Nothing to point at before setup is done
+    $('aaHelp').hidden = on;
+    if (on) $('aaHelpPop').hidden = true;
+    if (on) fill('data-o', profile);
+  }
+
+  // Inputs flagged by a failed "Get started" (red) or filled from the resume (orange) lose the mark once edited
+  function setupChanged(path) {
+    var el = document.querySelector('[data-o="' + path + '"]');
+    if (el && el.closest('label')) el.closest('label').classList.remove('bad', 'auto');
+  }
+
+  function resumeStatus(text, isError) {
+    busy(false);
+    $('obResumeStatus').style.color = isError ? '#ef4444' : '';
+    $('obResumeStatus').textContent = text;
+  }
+
+  // Spinner + seconds counter while the resume is read; "Get started" waits for it
+  var busyTimer = null;
+  function busy(text) {
+    clearInterval(busyTimer);
+    busyTimer = null;
+    var box = $('obLoader');
+    var btn = $('obStart');
+    if (!text) {
+      box.hidden = true;
+      btn.disabled = false;
+      btn.textContent = 'Get started';
+      return;
+    }
+    var t0 = Date.now();
+    var tick = function() { $('obLoaderTime').textContent = Math.round((Date.now() - t0) / 1000) + 's'; };
+    $('obResumeStatus').textContent = '';
+    $('obLoaderText').textContent = text;
+    tick();
+    busyTimer = setInterval(tick, 1000);
+    box.hidden = false;
+    btn.disabled = true;
+    btn.textContent = 'Reading your resume…';
+  }
+
+  // Fills the still-empty profile fields with what the resume says. Fields the user typed are never touched.
+  var autofillRun = 0;
+  async function autofillFromResume(text) {
+    var run = ++autofillRun;
+    busy('Step 2 of 2 · Finding your name, job, education and links with the local AI. This can take a minute…');
+    var r;
+    try {
+      r = await AA.extractProfile(text);
+    } catch (e) {
+      if (run === autofillRun) resumeStatus('Could not read details from the resume: ' + e.message, true);
+      return;
+    }
+    if (run !== autofillRun) return; // a newer resume came in meanwhile
+    var filled = [];
+    Object.keys(r.fields).forEach(function(k) {
+      if (String(profile[k] == null ? '' : profile[k]).trim()) return;
+      profile[k] = r.fields[k];
+      filled.push(k);
+    });
+    if (filled.length) await AA.save('aaProfile', profile);
+    filled.forEach(function(k) {
+      document.querySelectorAll('[data-o="' + k + '"], [data-p="' + k + '"]').forEach(function(el) { el.value = profile[k]; });
+      var el = document.querySelector('[data-o="' + k + '"]');
+      if (el && el.closest('label')) { el.closest('label').classList.remove('bad'); el.closest('label').classList.add('auto'); }
+    });
+    var shown = filled.filter(function(k) { return document.querySelector('[data-o="' + k + '"]'); }).length;
+    var miss = missingFields(profile).map(function(k) { return REQUIRED[k]; });
+    resumeStatus(
+      (shown ? 'Filled ' + shown + ' detail' + (shown === 1 ? '' : 's') + ' from your resume (orange) – please check them. '
+        : 'No new details found in the resume. ') +
+      (miss.length ? 'Still needed: ' + miss.join(', ') + '.' : 'Everything required is filled in.') +
+      (r.aiError ? ' (Local AI not reachable – ' + r.aiError + ' – so only contact details and links were read. Is Ollama running?)' : ''),
+      false);
+  }
+
+  $('obResumeFile').addEventListener('change', async function() {
+    var f = this.files[0];
+    this.value = '';
+    if (!f) return;
+    autofillRun++; // a reading still in progress is no longer wanted
+    busy('Step 1 of 2 · Reading ' + f.name + '…');
+    var text;
+    try {
+      text = await loadResume(f);
+    } catch (e) {
+      resumeStatus('Could not read ' + f.name + ': ' + e.message, true);
+      return;
+    }
+    setupChanged('resumeText');
+    lastAutofilled = text;
+    autofillFromResume(text);
+  });
+
+  // Pasted resume text: read it once the box loses focus
+  var lastAutofilled = '';
+  document.querySelector('[data-o="resumeText"]').addEventListener('change', function() {
+    var text = this.value.trim();
+    if (text.length < 200 || text === lastAutofilled) return;
+    lastAutofilled = text;
+    autofillFromResume(text);
+  });
+
+  $('obStart').addEventListener('click', async function() {
+    var miss = missingFields(profile);
+    document.querySelectorAll('[data-o]').forEach(function(el) {
+      var label = el.closest('label');
+      if (label) label.classList.toggle('bad', miss.indexOf(el.getAttribute('data-o')) >= 0);
+    });
+    if (miss.length) {
+      $('obErr').textContent = 'Still needed: ' + miss.map(function(k) { return REQUIRED[k]; }).join(', ') + '.';
+      var first = document.querySelector('.setup label.f.bad');
+      if (first) { first.scrollIntoView({ block: 'center', behavior: 'smooth' }); first.querySelector('input, textarea').focus({ preventScroll: true }); }
+      return;
+    }
+    $('obErr').textContent = '';
+    await AA.save('aaProfile', profile);
+    fill('data-p', profile);
+    showSetup(false);
+    $('secProfile').open = true;
+    log('Profile saved, ' + profile.firstName + '. Add your phone number under "Profile" and job titles under "Job search", then press Start (try a Dry run first).', 'done');
+  });
+
+  // Two clicks, no window.confirm (it blocks the panel)
+  $('aaResetProfile').addEventListener('click', async function() {
+    var btn = this;
+    if (AA.state.running) { log('Stop the current run before starting over.', 'error'); return; }
+    if (!btn.dataset.armed) {
+      btn.dataset.armed = '1';
+      btn.textContent = 'Click again to clear the profile';
+      setTimeout(function() { delete btn.dataset.armed; btn.textContent = 'Start over as a new user'; }, 4000);
+      return;
+    }
+    delete btn.dataset.armed;
+    btn.textContent = 'Start over as a new user';
+    await chrome.storage.local.remove('aaProfile');
+    profile = await AA.load('aaProfile', AA.DEFAULT_PROFILE);
+    fill('data-p', profile);
+    autofillRun++;
+    resumeStatus('');
+    $('obErr').textContent = '';
+    document.querySelectorAll('.setup label.f.bad, .setup label.f.auto').forEach(function(l) { l.classList.remove('bad', 'auto'); });
+    lastAutofilled = '';
+    showSetup(true);
   });
 
   $('aaClearSkipped').addEventListener('click', async function() {
@@ -213,8 +406,40 @@
     log('Skipped jobs will be retried on the next run.', 'info');
   });
 
+  // ---------- saved-answers reminder ----------
+  // The "?" next to the title turns red every 6 hours until it is opened
+  var HELP_EVERY = 6 * 60 * 60 * 1000;
+  async function helpCheck() {
+    var seen = (await chrome.storage.local.get('aaHelpSeenAt')).aaHelpSeenAt || 0;
+    $('aaHelp').classList.toggle('due', Date.now() - seen >= HELP_EVERY);
+  }
+  function helpShow(on) {
+    $('aaHelpPop').hidden = !on;
+    if (on) {
+      $('aaHelp').classList.remove('due');
+      AA.save('aaHelpSeenAt', Date.now());
+    }
+  }
+  $('aaHelp').addEventListener('click', function(e) {
+    e.stopPropagation();
+    helpShow($('aaHelpPop').hidden);
+  });
+  $('aaHelpClose').addEventListener('click', function() { helpShow(false); });
+  $('aaHelpGo').addEventListener('click', function() {
+    helpShow(false);
+    document.querySelector('.tabs button[data-view="viewApply"]').click();
+    $('secAnswers').open = true;
+    $('secAnswers').scrollIntoView({ block: 'start', behavior: 'smooth' });
+  });
+  document.addEventListener('click', function(e) {
+    if (!$('aaHelpPop').hidden && !$('aaHelpPop').contains(e.target)) helpShow(false);
+  });
+  setInterval(helpCheck, 60 * 1000);
+
   // ---------- start / stop ----------
   $('aaStart').addEventListener('click', function() {
+    // A required field may have been cleared in the Profile section since setup
+    if (missingFields(profile).length) { showSetup(true); return; }
     if (settings.mode === 'auto' && !confirm_auto()) return;
     $('aaConfirm').innerHTML = '';
     AA.run();
@@ -249,6 +474,25 @@
 
   // ---------- init ----------
   async function init() {
+    // One-time (v0.10): the built-in personal profile is gone and every user goes through the
+    // setup screen, so clear the profile stored by older versions. A copy stays in aaProfileBackup.
+    var mig = await chrome.storage.local.get(['aaSetupV1', 'aaSetupV2', 'aaSetupV3', 'aaProfile']);
+    if (!mig.aaSetupV1) {
+      if (mig.aaProfile) await AA.save('aaProfileBackup', mig.aaProfile);
+      await chrome.storage.local.remove('aaProfile');
+      await AA.save('aaSetupV1', true);
+    }
+    // One-time (v0.11): start every profile from nothing again, including the v0.10 backup copy
+    if (!mig.aaSetupV2) {
+      await chrome.storage.local.remove(['aaProfile', 'aaProfileBackup']);
+      await AA.save('aaSetupV2', true);
+    }
+    // One-time (v0.12): clear the profile entered while testing v0.11, so setup starts empty again
+    if (!mig.aaSetupV3) {
+      await chrome.storage.local.remove(['aaProfile', 'aaProfileBackup']);
+      await AA.save('aaSetupV3', true);
+    }
+
     settings = await AA.load('aaSettings', AA.DEFAULT_SETTINGS);
     profile = await AA.load('aaProfile', AA.DEFAULT_PROFILE);
 
@@ -270,13 +514,14 @@
 
     bind('data-s', function() { return settings; }, 'aaSettings');
     bind('data-p', function() { return profile; }, 'aaProfile');
+    bind('data-o', function() { return profile; }, 'aaProfile', setupChanged);
     document.querySelector('[data-s="fitCheck"]').value = String(!!settings.fitCheck);
 
-    // First run: open the profile section so it gets filled in
-    if (!profile.firstName) {
-      $('secProfile').open = true;
-      log('First time? Open "Profile", fill it in and upload your resume. Then run a Dry run.', 'info');
-    }
+    // New user (or incomplete profile): the setup screen comes first
+    if (missingFields(profile).length) showSetup(true);
+
+    // Never opened yet counts as due, so a new user sees it red right after setup
+    helpCheck();
 
     AA.ui.log = log;
     AA.ui.status = status;

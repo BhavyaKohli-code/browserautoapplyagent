@@ -346,6 +346,127 @@
     }
   }
 
+  // ---------- profile from resume ----------
+  // Reads a resume and returns { fields, aiError }: the profile fields found in it.
+  // Email, phone and links come from patterns; the local model reads the rest. Nothing is guessed.
+  async function extractProfile(text) {
+    var out = {};
+    var https = function(u) { return /^https?:\/\//i.test(u) ? u : 'https://' + u; };
+    var mail = text.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/);
+    if (mail) out.email = mail[0];
+    var li = text.match(/(?:https?:\/\/)?(?:[a-z]{2,3}\.)?linkedin\.com\/in\/[\w%-]+\/?/i);
+    if (li) out.linkedinUrl = https(li[0]);
+    var gh = text.match(/(?:https?:\/\/)?(?:www\.)?github\.com\/[\w-]+/i);
+    if (gh) out.githubUrl = https(gh[0]);
+    // First run of 10-13 digits that is not a date range; Indian numbers lose the +91 / 0 prefix
+    (text.match(/\+?\d[\d \t().-]{8,17}\d/g) || []).some(function(c) {
+      var d = c.replace(/\D/g, '');
+      if (d.length < 10 || d.length > 13 || /^(19|20)\d\d\D+(19|20)\d\d$/.test(c.trim())) return false;
+      if (d.length === 12 && d.indexOf('91') === 0) d = d.slice(2);
+      else if (d.length === 11 && d[0] === '0') d = d.slice(1);
+      out.phone = d;
+      return true;
+    });
+
+    var keys = ['firstName', 'lastName', 'city', 'country', 'currentTitle', 'currentCompany', 'dob',
+      'totalYears', 'education', 'portfolioUrl', 'email', 'phone', 'linkedinUrl', 'githubUrl'];
+    var props = {};
+    keys.forEach(function(k) { props[k] = { type: 'string' }; });
+    var aiError = null;
+    try {
+      var ai = await ollamaJSON(
+        'You extract facts about a job candidate from their resume. Copy values as written in the resume. ' +
+        'Use "" for anything the resume does not state. Never guess or invent. Reply JSON.',
+        'Today is ' + new Date().toDateString() + '.\n' +
+        'firstName, lastName: the candidate\'s name\n' +
+        'city, country: where the candidate lives or currently works\n' +
+        'currentTitle, currentCompany: the most recent job (marked Present/Current, else the latest one)\n' +
+        'dob: date of birth as DD/MM/YYYY, only if the resume states it\n' +
+        'totalYears: total years of professional work experience as a number like "3.5" - the figure the resume ' +
+        'states (e.g. "3.5+ years of experience"), otherwise add up the job durations, leaving out internships\n' +
+        'education: the highest degree with institution and year, in one line\n' +
+        'portfolioUrl: personal website or portfolio link (not LinkedIn, not GitHub)\n' +
+        'email, phone, linkedinUrl, githubUrl: as written\n\nRESUME:\n' + text.slice(0, 6000),
+        { type: 'object', properties: props, required: keys });
+      keys.forEach(function(k) {
+        var v = String(ai[k] == null ? '' : ai[k]).trim();
+        if (!v || out[k] || v.length > 150 || /^(n\/?a|none|null|unknown|not (stated|mentioned|provided))$/i.test(v)) return;
+        if (k === 'totalYears') {
+          var n = parseFloat(v);
+          if (isNaN(n) || n < 0 || n > 50) return;
+          v = String(Math.round(n * 10) / 10);
+        }
+        if (k === 'dob' && !/^\d{1,2}[\/.-]\d{1,2}[\/.-]\d{4}$/.test(v)) return;
+        if (k === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) return;
+        if (/Url$/.test(k)) { if (!/\.[a-z]{2,}/i.test(v) || /\s/.test(v)) return; v = https(v); }
+        // the model only sees the text, so its name/contact values must actually be in it
+        if (/^(firstName|lastName|email)$/.test(k) && text.toLowerCase().indexOf(v.toLowerCase()) < 0) return;
+        out[k] = v;
+      });
+    } catch (e) {
+      aiError = e.name === 'AbortError' ? 'timed out' : e.message;
+    }
+
+    // Without the model: name from the first line, years from "N years of experience"
+    if (!out.firstName) {
+      var first = (text.split('\n').map(function(l) { return l.trim(); }).filter(Boolean)[0] || '');
+      var words = first.split(/\s+/);
+      if (words.length >= 2 && words.length <= 4 && /^[A-Za-z .'-]+$/.test(first)) {
+        out.firstName = words[0];
+        out.lastName = words.slice(1).join(' ');
+      }
+    }
+    // Years: the figure the resume states, else the job dates added up; the model's own sum is the last resort
+    var stated = text.match(/(\d+(?:\.\d+)?)\s*\+?\s*years? of (?:professional |work |industry |hands-on )?experience/i);
+    var fromDates = yearsFromDates(text);
+    if (stated && parseFloat(stated[1]) < 50) out.totalYears = stated[1];
+    else if (fromDates) out.totalYears = fromDates;
+    return { fields: out, aiError: aiError };
+  }
+
+  // Adds up "Jan 2022 - Present" style job periods (overlaps counted once, internships and education left out)
+  function yearsFromDates(text) {
+    var months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    var exp = text.search(/^\s*(work |professional )?(experience|employment)( history)?\s*:?\s*$/im);
+    if (exp >= 0) {
+      text = text.slice(exp);
+      var next = text.slice(1).search(/^\s*(education|skills|technical skills|projects|certifications?|achievements|awards)\s*:?\s*$/im);
+      if (next >= 0) text = text.slice(0, next + 1);
+    }
+    var date = '((?:' + months.join('|') + ')[a-z]*\\.?\\s*\\d{4}|\\d{1,2}\\/\\d{4}|\\d{4})';
+    var re = new RegExp(date + '\\s*(?:-|–|—|to)\\s*(' + date.slice(1, -1) + '|present|current|now|till date|to date|ongoing)', 'gi');
+    var now = new Date();
+    var toMonth = function(s, isEnd) {
+      s = s.toLowerCase();
+      if (/present|current|now|date|ongoing/.test(s)) return now.getFullYear() * 12 + now.getMonth();
+      var y = parseInt(s.match(/\d{4}/)[0], 10);
+      var mi = months.findIndex(function(m) { return s.indexOf(m) === 0; });
+      var num = s.match(/^(\d{1,2})\//);
+      var m = mi >= 0 ? mi : num ? parseInt(num[1], 10) - 1 : (isEnd ? 11 : 0);
+      return y * 12 + m;
+    };
+    var spans = [];
+    text.split('\n').forEach(function(line) {
+      if (/\bintern(ship)?\b|trainee|b\.?\s?tech|bachelor|master|university|college|school|degree|b\.?com|\bbca\b|\bmca\b|\bmba\b|class (x|xii)/i.test(line)) return;
+      var m;
+      re.lastIndex = 0;
+      while ((m = re.exec(line))) {
+        var a = toMonth(m[1], false), b = toMonth(m[2], true);
+        if (b >= a && a > 1950 * 12 && b <= now.getFullYear() * 12 + 12) spans.push([a, b + 1]);
+      }
+    });
+    if (!spans.length) return '';
+    spans.sort(function(x, y) { return x[0] - y[0]; });
+    var total = 0, cur = spans[0].slice();
+    spans.slice(1).concat([[Infinity, Infinity]]).forEach(function(s) {
+      if (s[0] <= cur[1]) { cur[1] = Math.max(cur[1], s[1]); return; }
+      total += cur[1] - cur[0];
+      cur = s.slice();
+    });
+    var yrs = Math.round(total / 12 * 10) / 10;
+    return yrs > 0 && yrs < 50 ? String(yrs) : '';
+  }
+
   function profileText(p) {
     var lines = [
       'Name: ' + p.firstName + ' ' + p.lastName,
@@ -354,7 +475,7 @@
       'Location: ' + p.city + ', ' + p.country,
       'Current title: ' + p.currentTitle + (p.currentCompany ? ' at ' + p.currentCompany : ''),
       'Total professional experience (years): ' + p.totalYears,
-      'Skills with years of experience: ' + p.skills,
+      'Skills: ' + (p.skills || 'see resume'),
       'Highest education: ' + p.education,
       'Current CTC / salary (yearly, ' + p.salaryCurrency + '): ' + p.currentCtc,
       'Expected CTC / salary (yearly, ' + p.salaryCurrency + '): ' + p.expectedCtc,
@@ -1432,6 +1553,7 @@
     buildSearchUrl: buildSearchUrl,
     buildIndeedUrl: buildIndeedUrl,
     buildNaukriUrl: buildNaukriUrl,
+    extractProfile: extractProfile,
     // exported for testing
     _ruleAnswer: ruleAnswer,
     _resolveAnswer: resolveAnswer,

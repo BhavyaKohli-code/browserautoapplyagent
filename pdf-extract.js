@@ -16,7 +16,16 @@ async function extractPdfText(file) {
   for (var i = 1; i <= pdf.numPages; i++) {
     var page = await pdf.getPage(i);
     var content = await page.getTextContent();
-    var text = content.items.map(function(item) { return item.str; }).join(' ');
+    // Keep the PDF's lines: a new line starts wherever the text moves to another baseline
+    var text = '', lastY = null;
+    content.items.forEach(function(item) {
+      if (!item.str) return;
+      var y = item.transform ? item.transform[5] : null;
+      if (lastY !== null && y !== null && Math.abs(y - lastY) > 2) text += '\n';
+      else if (text) text += ' ';
+      text += item.str;
+      lastY = y;
+    });
     pages.push(text);
   }
   return pages.join('\n\n--- Page Break ---\n\n');

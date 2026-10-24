@@ -129,12 +129,20 @@ sudo systemctl restart ollama
 
 After pulling new code (`git pull`), press the **reload** ↻ button on the extension card.
 
-### 5. (Auto Apply only) Set your profile
+### 5. Set up your profile
 
-Edit `profile-default.js` with your own details – name, email, phone, city, CTC, notice period,
-links, and paste your resume as plain text into `resumeText` – then reload the extension.
-You can also edit everything later in the **Auto Apply → Profile** section of the panel; values
-saved there override the file.
+The first time you open the side panel it shows a **profile setup** screen instead of the tabs.
+Upload your resume first, then fill in name, email, city, current title and company, date of
+birth, total years of experience, highest education, last drawn and expected CTC, and the minimum
+years in any skill (LinkedIn / GitHub / portfolio URLs are optional).
+When you upload (or paste) the resume, the panel fills in whatever it can find in it – name, email,
+phone, city, current title and company, education, links, and total years of experience (the figure
+the resume states, otherwise the job dates added up, internships left out). Email, phone and links
+are read directly; the rest is read by your local Ollama model (about a minute on a laptop CPU).
+Auto-filled boxes are marked orange so you can check them, and anything you typed is never replaced. Press **Get started**: the
+usual panel opens with those details in **Auto Apply → Profile**, where you add the rest (phone…). The profile is saved in this browser only
+(`chrome.storage`). Edit it any time in **Auto Apply → Profile**; **Start over as a new user** at the
+bottom of that section clears it and brings the setup screen back.
 
 ## Usage
 
@@ -170,11 +178,11 @@ reused on both sites, so the model is needed less and less over time.
 
 Answer priority: your saved/edited answers → profile rules (name, phone, CTC, notice period,
 sponsorship, years of experience…) → local LLM (reads your profile + resume).
-Your default profile lives in `profile-default.js`; anything edited in the panel overrides it.
+Your profile is the one entered in the setup screen (editable under **Profile**).
 
 1. Be logged in to LinkedIn / Indeed / Naukri in this Chrome profile.
 2. Open the side panel → **Auto Apply**.
-3. Check **Profile** (prefilled from `profile-default.js`).
+3. Check **Profile** (filled in during setup).
 4. Set **Job search**: titles one per line, country, date posted, work type, and **Cities**.
    Type a city and press **+** (or Enter); "Remote, Noida, Gurugram" adds three at once, ✕ removes
    one. The bot searches **city by city**: every keyword in the first city (e.g. Remote), then
@@ -212,10 +220,10 @@ Site notes:
   The debugger also auto-accepts Indeed's "Leave site?" prompt when an apply tab is closed.
 
 Experience answers:
-- **Min years for any skill** (Profile, default **3**): every "years of experience with X" answer
-  is at least this – for skills in your list with fewer years, and for skills not in your list at
-  all. Higher values from your skills list (e.g. 3.5) are kept. "Do you have experience with X?"
-  is answered **Yes** (unless it asks for more years than you have).
+- **Minimum years in any skill** (slider in setup and Profile, default **3**): questions like
+  "How many years of experience do you have in Python / React / AWS?" are answered with at least
+  this number. No per-skill list is needed. "Do you have experience with X?" is answered **Yes**
+  (unless it asks for more years than you have).
 
 Cities per site:
 - LinkedIn: each city is turned into LinkedIn's location id automatically (cached). "Remote"
@@ -276,7 +284,7 @@ For open-ended browsing tasks bigger models help. Auto Apply works well with `qw
 - `linkedin-dom.js` - LinkedIn page helpers (job cards, Easy Apply modal, form reading/filling)
 - `indeed-dom.js` - Indeed page helpers (search results, smartapply form steps)
 - `naukri-dom.js` - Naukri page helpers (search results, job page Apply, recruiter chatbot)
-- `profile-default.js` - your default Auto Apply profile (edit this with your details)
+- `profile-default.js` - optional prefill values for the setup screen (empty by default)
 - `autoapply.js` - Auto Apply orchestrator + answer engine (runs in the side panel)
 - `autoapply-ui.js` - Auto Apply settings, log, saved answers and history UI
 
