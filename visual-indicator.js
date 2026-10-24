@@ -1,5 +1,4 @@
 // Visual indicator - shows glow border and stop button when agent is active
-// Adapted from Claude's agent-visual-indicator.js
 (function() {
   window.__ollamaIndicatorReady = true;
   let glowEl = null;

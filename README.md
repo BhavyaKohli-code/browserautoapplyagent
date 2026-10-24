@@ -2,13 +2,11 @@
 
 AI browser agent Chrome extension powered by local Ollama models. Chat with an AI that can browse the web, interact with pages, read PDFs, and execute multi-step tasks - all running locally on your machine.
 
-Inspired by Claude's browser extension, but using your own local models.
-
 ## Features
 
 - Chat interface with plan-and-confirm workflow
 - Autonomous browser actions (click, type, navigate, scroll)
-- Accessibility tree analysis (like Claude's extension)
+- Accessibility tree analysis
 - Visual indicators when agent is active (orange glow border)
 - PDF/text file upload and analysis
 - Loop detection to prevent getting stuck
@@ -277,7 +275,7 @@ For open-ended browsing tasks bigger models help. Auto Apply works well with `qw
 
 - `background.js` - Service worker: Ollama communication, agent loop, tab management
 - `sidepanel.html/js` - Chat UI with plan approval workflow
-- `accessibility-tree.js` - DOM analysis (adapted from Claude's extension)
+- `accessibility-tree.js` - DOM analysis
 - `visual-indicator.js` - Orange glow border when agent is active
 - `register-tab.js` - Content script that registers tabs with the background
 - `pdf-extract.js` - PDF text extraction using pdf.js

@@ -1,5 +1,4 @@
 // Floating panel - fallback for browsers without side panel support (Arc, etc)
-// Adapted from Claude's floating-panel.js
 (function() {
   const STORAGE_KEY = 'ollama-panel-state';
   const DEFAULTS = { x: null, y: 80, width: 400, height: 650, open: false };

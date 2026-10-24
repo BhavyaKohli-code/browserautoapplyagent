@@ -1,4 +1,4 @@
-// Accessibility tree generator - adapted from Claude's approach
+// Accessibility tree generator
 // Builds a structured representation of interactive page elements with ref_ids
 (function() {
   window.__ollamaElementMap || (window.__ollamaElementMap = {});
