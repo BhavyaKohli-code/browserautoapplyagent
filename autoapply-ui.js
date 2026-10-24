@@ -437,13 +437,73 @@
   setInterval(helpCheck, 60 * 1000);
 
   // ---------- start / stop ----------
-  $('aaStart').addEventListener('click', function() {
+  $('aaStart').addEventListener('click', async function() {
     // A required field may have been cleared in the Profile section since setup
     if (missingFields(profile).length) { showSetup(true); return; }
+    var warnings = await limitWarnings();
+    if (warnings.length) { confirmLimits(warnings); return; }
+    startRun();
+  });
+
+  function startRun() {
     if (settings.mode === 'auto' && !confirm_auto()) return;
     $('aaConfirm').innerHTML = '';
     AA.run();
-  });
+  }
+
+  // ---------- safe limits ----------
+  // Over the tested limits is allowed, but the user is told the risk first
+  var LIMIT_RE = /^max(Linkedin|Indeed|Naukri)$/;
+
+  function overSafe(key) { return AA.siteLimit(settings, key) > AA.SAFE_LIMITS[key].max; }
+
+  function showLimitHints() {
+    var any = false;
+    Object.keys(AA.SAFE_LIMITS).forEach(function(key) {
+      var risky = overSafe(key);
+      any = any || risky;
+      document.querySelector('[data-s="' + AA.SAFE_LIMITS[key].setting + '"]').closest('label').classList.toggle('risky', risky);
+    });
+    $('aaLimitHint').classList.toggle('risky', any);
+  }
+
+  async function limitWarnings() {
+    var history = await AA.load('aaHistory', []);
+    var out = [];
+    AA.siteKeysFor(settings).forEach(function(key) {
+      var safe = AA.SAFE_LIMITS[key], limit = AA.siteLimit(settings, key);
+      if (key === 'linkedin') {
+        if (limit > safe.max) out.push('LinkedIn is set to ' + limit + ' applications in one run. We advise at most 25 at a time: 25 in the morning and 25 in the evening.');
+        var today = AA.appliedToday(history, 'LinkedIn');
+        if (today + limit > safe.perDay) out.push('You have already sent ' + today + ' LinkedIn applications today. We advise no more than ' + safe.perDay + ' a day (25 in the morning, 25 in the evening).');
+      } else if (limit > safe.max) {
+        out.push(AA.SITES[key].name + ' is set to ' + limit + ' applications a day. We advise at most ' + safe.max + ' a day.');
+      }
+    });
+    return out;
+  }
+
+  function confirmLimits(warnings) {
+    var fixable = Object.keys(AA.SAFE_LIMITS).some(overSafe);
+    var box = $('aaConfirm');
+    box.innerHTML = '<div class="confirm-box"><h4>Above the safe limit</h4><ul></ul>' +
+      '<div class="hint" style="margin-bottom:8px">These limits were tested by the tool\'s author. Going higher is up to you, but sites may slow down, block or restrict your account.</div>' +
+      '<div class="row">' + (fixable ? '<button class="btn primary" id="aaSafe">Use safe limits and start</button>' : '') +
+      '<button class="btn ghost" id="aaRisk">Start anyway</button><button class="btn ghost" id="aaRiskNo">Cancel</button></div></div>';
+    var ul = box.querySelector('ul');
+    warnings.forEach(function(w) { var li = document.createElement('li'); li.textContent = w; ul.appendChild(li); });
+    if (fixable) $('aaSafe').addEventListener('click', function() {
+      Object.keys(AA.SAFE_LIMITS).forEach(function(key) {
+        if (overSafe(key)) settings[AA.SAFE_LIMITS[key].setting] = AA.SAFE_LIMITS[key].max;
+      });
+      AA.save('aaSettings', settings);
+      fill('data-s', settings);
+      showLimitHints();
+      startRun();
+    });
+    $('aaRisk').addEventListener('click', startRun);
+    $('aaRiskNo').addEventListener('click', function() { box.innerHTML = ''; });
+  }
   $('aaStop').addEventListener('click', function() {
     AA.stop();
     log('Stopping after the current step…', 'error');
@@ -512,7 +572,8 @@
     }
     renderCities();
 
-    bind('data-s', function() { return settings; }, 'aaSettings');
+    bind('data-s', function() { return settings; }, 'aaSettings', function(path) { if (LIMIT_RE.test(path)) showLimitHints(); });
+    showLimitHints();
     bind('data-p', function() { return profile; }, 'aaProfile');
     bind('data-o', function() { return profile; }, 'aaProfile', setupChanged);
     document.querySelector('[data-s="fitCheck"]').value = String(!!settings.fitCheck);

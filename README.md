@@ -191,7 +191,11 @@ Your profile is the one entered in the setup screen (editable under **Profile**)
    - *Fully automatic* – submits on its own.
 6. Pick the site(s) and press **Start applying**. Keep the panel open and the Chrome window
    visible (not minimized) – Chrome freezes timers in hidden tabs. Stop any time from the panel
-   or the on-page "Stop Agent" button. **Max applications** counts per site.
+   or the on-page "Stop Agent" button.
+7. Stay within the **safe limits** (tested by the author): **LinkedIn 25 applications per run** – one
+   run in the morning, one in the evening – and **Indeed and Naukri 100 a day** each. You can set
+   higher numbers in Run settings, but the panel warns you first: sites may restrict accounts that
+   apply too much.
 
 Review **Saved answers** after a dry run and fix anything wrong – fixes are used from then on.
 **History** lists every job (with its site) and the reason when it was skipped.

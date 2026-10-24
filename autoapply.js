@@ -32,7 +32,10 @@
     excludeTitle: 'senior staff, principal, director, head of, intern',
     excludeCompanies: '',
     mode: 'confirm', // dry | confirm | auto
-    maxApplications: 20,
+    // Tested safe limits (see SAFE_LIMITS): LinkedIn per run, Indeed and Naukri per day
+    maxLinkedin: 25,
+    maxIndeed: 100,
+    maxNaukri: 100,
     minDelay: 8,
     maxDelay: 20,
     fitCheck: false,
@@ -41,6 +44,30 @@
     indeedLocation: '', // older single-city fields, moved into cities on first load
     naukriLocation: ''
   };
+
+  // Limits the author tested without accounts getting restricted. Users can set higher ones,
+  // but are warned first. LinkedIn: 25 per run, twice a day (morning + evening).
+  var SAFE_LIMITS = {
+    linkedin: { setting: 'maxLinkedin', max: 25, perDay: 50 },
+    indeed: { setting: 'maxIndeed', max: 100, perDay: 100 },
+    naukri: { setting: 'maxNaukri', max: 100, perDay: 100 }
+  };
+
+  function siteKeysFor(settings) {
+    return settings.sites === 'both' ? ['linkedin', 'indeed']
+      : settings.sites === 'all' ? ['linkedin', 'indeed', 'naukri']
+      : [SITES[settings.sites] ? settings.sites : 'linkedin'];
+  }
+
+  function siteLimit(settings, key) {
+    return parseInt(settings[SAFE_LIMITS[key].setting], 10) || SAFE_LIMITS[key].max;
+  }
+
+  // Real applications (not dry runs) sent on a site since midnight
+  function appliedToday(history, siteName) {
+    var midnight = new Date().setHours(0, 0, 0, 0);
+    return history.filter(function(h) { return h.site === siteName && h.status === 'applied' && h.ts >= midnight; }).length;
+  }
 
   var DEFAULT_PROFILE = {
     firstName: '', lastName: '', email: '', phone: '', city: '', country: 'India',
@@ -1384,9 +1411,7 @@
       return;
     }
 
-    var siteKeys = settings.sites === 'both' ? ['linkedin', 'indeed']
-      : settings.sites === 'all' ? ['linkedin', 'indeed', 'naukri']
-      : [SITES[settings.sites] ? settings.sites : 'linkedin'];
+    var siteKeys = siteKeysFor(settings);
 
     state.running = true;
     state.stop = false;
@@ -1401,6 +1426,7 @@
 
       for (var s = 0; s < siteKeys.length && !state.stop; s++) {
         state.site = SITES[siteKeys[s]];
+        state.siteKey = siteKeys[s];
         try {
           await runSite(settings, profile, answers, history, seen);
         } catch (e) {
@@ -1418,14 +1444,20 @@
     }
   }
 
-  // Applies on one site until its quota (Max applications is per site) is reached
+  // Applies on one site until its quota is reached: LinkedIn's limit is per run,
+  // Indeed's and Naukri's are per day, so applications sent earlier today count against them
   async function runSite(settings, profile, answers, history, seen) {
     var site = state.site;
     var excludeTitle = listFromCsv(settings.excludeTitle);
     var excludeCompanies = listFromCsv(settings.excludeCompanies);
     var keywords = settings.keywords.split('\n').map(function(x) { return x.trim(); }).filter(Boolean);
-    var target = parseInt(settings.maxApplications, 10) || 10;
+    var limit = siteLimit(settings, state.siteKey);
+    var target = state.siteKey === 'linkedin' ? limit : limit - appliedToday(history, site.name);
     var done = 0;
+    if (target <= 0) {
+      ui.log(site.name + ': today\'s limit of ' + limit + ' applications is reached – skipping. Try again tomorrow.', 'skip');
+      return;
+    }
 
     ui.log('── ' + site.name + ' ──', 'job');
     state.tabId = await getSiteTab(site);
@@ -1544,6 +1576,11 @@
     DEFAULT_SETTINGS: DEFAULT_SETTINGS,
     DEFAULT_PROFILE: DEFAULT_PROFILE,
     GEO_IDS: GEO_IDS,
+    SAFE_LIMITS: SAFE_LIMITS,
+    SITES: SITES,
+    siteKeysFor: siteKeysFor,
+    siteLimit: siteLimit,
+    appliedToday: appliedToday,
     state: state,
     ui: ui,
     load: load,

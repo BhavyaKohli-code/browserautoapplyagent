@@ -248,6 +248,10 @@ input[type="file"] { display: none; }
 .aa label.f.bad input, .aa label.f.bad textarea { border-color: #ef4444; }
 .aa label.f.auto input, .aa label.f.auto textarea { border-color: #8a4a12; background: #1f1408; }
 .aa .ob-err { font-size: 11px; color: #ef4444; line-height: 1.5; }
+/* run limit above the tested safe value */
+.aa label.f.risky { color: #ff9a4d; }
+.aa label.f.risky input { border-color: #ff6b00; }
+.aa .hint.risky { color: #ff9a4d; }
 .aa .ob-err:empty { display: none; }
 .aa .loader { display: flex; align-items: center; gap: 10px; background: #1a1206; border: 1px solid #5a2a00; border-radius: 8px; padding: 9px 10px; margin: 2px 0 6px; font-size: 11px; color: #ffb27a; line-height: 1.45; }
 .aa .loader b { margin-left: auto; color: #ff9a4d; font-variant-numeric: tabular-nums; font-weight: 600; }
@@ -342,7 +346,10 @@ input[type="file"] { display: none; }
               <option value="auto">Fully automatic – submit without asking</option>
             </select>
           </label>
-          <label class="f">Max applications per site<input type="number" data-s="maxApplications" min="1" max="200"></label>
+          <div class="f full"><span class="hint" id="aaLimitHint">Safe limits (tested): <b>LinkedIn 25 per run</b> – one run in the morning, one in the evening. <b>Indeed and Naukri 100 a day</b> each. You can go higher, but sites may restrict your account.</span></div>
+          <label class="f">LinkedIn – max per run<input type="number" data-s="maxLinkedin" min="1" max="200"></label>
+          <label class="f">Indeed – max per day<input type="number" data-s="maxIndeed" min="1" max="500"></label>
+          <label class="f">Naukri – max per day<input type="number" data-s="maxNaukri" min="1" max="500"></label>
           <label class="f">AI job-fit filter
             <select data-s="fitCheck"><option value="false">Off – apply to all matches</option><option value="true">On – skip poor fits</option></select>
           </label>
