@@ -884,11 +884,22 @@
     return false;
   }
 
+  // The local model sometimes "answers" by repeating the question (or a greeting) back
+  // (free text only: a picked option may legitimately appear inside the question)
+  function echoesQuestion(answer, label, options) {
+    if (Array.isArray(answer) || (options && options.length)) return false;
+    var a = String(answer || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    var l = String(label || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (a.length < 15 || !l) return false;
+    return l.indexOf(a) >= 0 || a.indexOf(l) >= 0 || a.slice(0, 30) === l.slice(0, 30);
+  }
+
   // Resolve one field: saved answer -> profile rule -> LLM
   async function resolveAnswer(field, profile, answers, job, forceLLM) {
     var key = normLabel(field.label) + '|' + field.kind;
     var r = ruleAnswer(field, profile);
     var hasRule = r !== null && r !== undefined && r !== '';
+    if (answers[key] && answers[key].source !== 'you' && echoesQuestion(answers[key].answer, field.label, field.options)) delete answers[key];
     if (!forceLLM && !field.error) {
       var saved = answers[key];
       // Answers you edited yourself always win; otherwise profile rules beat cached AI guesses
@@ -911,7 +922,11 @@
       throw new Error('no profile value for "' + field.label + '" (the AI is not allowed to guess personal data – add it to your Profile)');
     }
     var a = await answerWithLLM(field, profile, job);
-    answers[key] = { label: field.label, kind: field.kind, answer: a, options: field.options || null, source: 'ai', ts: Date.now() };
+    if (echoesQuestion(a, field.label, field.options)) {
+      a = await answerWithLLM(field, profile, job, 'Do NOT repeat the question. Give only the answer itself.');
+      if (echoesQuestion(a, field.label, field.options)) throw new Error('the AI only repeated the question back – not sending that');
+    }
+    answers[key] ={ label: field.label, kind: field.kind, answer: a, options: field.options || null, source: 'ai', ts: Date.now() };
     return { answer: a, source: 'ai' };
   }
 
@@ -1385,6 +1400,17 @@
       await save('aaAnswers', answers);
       await save('aaMigratedV07', true);
       if (dropped) ui.log('Cleaned ' + dropped + ' AI answers that profile rules now handle.', 'info');
+    }
+
+    // Drop saved AI answers that just repeat their question (e.g. a recruiter greeting echoed back)
+    var echoed = Object.keys(answers).filter(function(k) {
+      var a = answers[k];
+      return a && a.source !== 'you' && echoesQuestion(a.answer, a.label, a.options);
+    });
+    if (echoed.length) {
+      echoed.forEach(function(k) { delete answers[k]; });
+      await save('aaAnswers', answers);
+      ui.log('Removed ' + echoed.length + ' saved answer(s) that only repeated the question.', 'info');
     }
 
     // One-time fix (v0.8.1): Naukri applications that went through but were logged as "unknown"

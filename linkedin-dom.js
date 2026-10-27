@@ -183,8 +183,18 @@
     await window.__humanAA.clickEl(btn);
     for (var i = 0; i < 25; i++) {
       await sleep(300);
-      if (applyDialog()) return { ok: true };
+      // Click through the safety-reminder style interstitial if it comes first
+      var dlgs = openDialogs();
+      for (var d = 0; d < dlgs.length; d++) {
+        var inter = buttonByText(dlgs[d], INTERSTITIAL_RE);
+        if (inter) { await window.__humanAA.clickEl(inter); await sleep(1200); break; }
+      }
+      if (applyDialog() && !buttonByText(applyDialog(), INTERSTITIAL_RE)) {
+        await sleep(600); // let the first step's fields and footer render
+        return { ok: true };
+      }
     }
+    if (applyDialog()) return { ok: true };
     return { ok: false, message: 'Easy Apply dialog did not open' };
   }
 
@@ -425,25 +435,61 @@
     return { ok: true };
   }
 
+  var SUBMIT_RE = /^(submit application|submit|enviar solicitud|enviar)\b/i;
+  var REVIEW_RE = /^(review|review your application|revisar)\b/i;
+  var NEXT_RE = /^(next|continue|continue to next step|siguiente|continuar)\b/i;
+  // Interstitials LinkedIn shows before/inside Easy Apply (safety reminder, "share profile?", etc.)
+  var INTERSTITIAL_RE = /^(continue applying|apply anyway|i understand|got it|continuar solicitud)\b/i;
+
+  // Any visible dialog that has a forward button - the apply form's footer can render
+  // in a sibling dialog/overlay, and interstitials use their own dialog.
+  function forwardDialogs() {
+    var list = [];
+    var a = applyDialog();
+    if (a) list.push(a);
+    openDialogs().forEach(function(d) { if (list.indexOf(d) < 0) list.push(d); });
+    return list;
+  }
+
   // Clicks the dialog's forward button. Returns which one was clicked.
   async function clickPrimary(allowSubmit) {
-    var dlg = applyDialog();
-    if (!dlg) return { ok: false, clicked: null, message: 'Dialog closed' };
-    var submit = buttonByText(dlg, /^(submit application|submit|enviar solicitud|enviar)$/i);
-    if (submit) {
-      if (!allowSubmit) return { ok: true, clicked: 'submit-ready' };
-      // Untick "Follow <company> to stay up to date" if present
-      Array.prototype.slice.call(dlg.querySelectorAll('input[type=checkbox]')).forEach(function(cb) {
-        if (cb.checked && /^follow\b/i.test(optionText(cb))) cb.click();
-      });
-      await window.__humanAA.clickEl(submit);
-      return { ok: true, clicked: 'submit' };
+    // The page's buttons can render (or re-enable) a few seconds after the step loads
+    for (var tries = 0; tries < 20; tries++) {
+      var dlgs = forwardDialogs();
+      if (!dlgs.length) return { ok: false, clicked: null, message: 'Dialog closed' };
+      for (var d = 0; d < dlgs.length; d++) {
+        var dlg = dlgs[d];
+        var inter = buttonByText(dlg, INTERSTITIAL_RE);
+        if (inter) {
+          await window.__humanAA.clickEl(inter);
+          await sleep(1500);
+          return { ok: true, clicked: 'next' };
+        }
+        var submit = buttonByText(dlg, SUBMIT_RE);
+        if (submit) {
+          if (!allowSubmit) return { ok: true, clicked: 'submit-ready' };
+          // Untick "Follow <company> to stay up to date" if present
+          Array.prototype.slice.call(dlg.querySelectorAll('input[type=checkbox]')).forEach(function(cb) {
+            if (cb.checked && /^follow\b/i.test(optionText(cb))) cb.click();
+          });
+          await window.__humanAA.clickEl(submit);
+          return { ok: true, clicked: 'submit' };
+        }
+        var review = buttonByText(dlg, REVIEW_RE);
+        if (review) { await window.__humanAA.clickEl(review); return { ok: true, clicked: 'review' }; }
+        var next = buttonByText(dlg, NEXT_RE);
+        if (next) { await window.__humanAA.clickEl(next); return { ok: true, clicked: 'next' }; }
+      }
+      await sleep(400);
     }
-    var review = buttonByText(dlg, /^(review|review your application|revisar)$/i);
-    if (review) { await window.__humanAA.clickEl(review); return { ok: true, clicked: 'review' }; }
-    var next = buttonByText(dlg, /^(next|continue|continue to next step|siguiente|continuar)$/i);
-    if (next) { await window.__humanAA.clickEl(next); return { ok: true, clicked: 'next' }; }
-    return { ok: false, clicked: null, message: 'No Next/Review/Submit button' };
+    var seen = [];
+    forwardDialogs().forEach(function(dl) {
+      Array.prototype.slice.call(dl.querySelectorAll('button')).forEach(function(b) {
+        var t = norm(b.innerText) || norm(b.getAttribute('aria-label'));
+        if (t && visible(b)) seen.push(t + (b.disabled ? ' (disabled)' : ''));
+      });
+    });
+    return { ok: false, clicked: null, message: 'No Next/Review/Submit button (saw: ' + (seen.join(' | ').slice(0, 200) || 'none') + ')' };
   }
 
   // After submit: wait for the confirmation, then close it.

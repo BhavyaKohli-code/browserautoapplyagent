@@ -203,6 +203,13 @@
     return norm(input.value);
   }
 
+  // Drops the recruiter bot's greeting/instruction sentences, keeping the actual question
+  var GREETING_RE = /^(hi|hello|hey|dear|greetings|good (morning|afternoon|evening))\b|thank(s| you)\b.{0,40}\b(interest|applying|applied)|\b(kindly|please)\b.{0,30}\b(answer|fill|respond|complete)\b.{0,30}\b(questions?|below|following)|\banswer (all|the following|these|a few)\b.{0,20}\bquestions?|\bto (proceed|complete|process) (with )?your application\b/i;
+  function stripGreeting(text) {
+    var parts = text.split(/(?<=[.!])\s+/);
+    return norm(parts.filter(function(s) { return !(GREETING_RE.test(s) && !/\?\s*$/.test(s)); }).join(' '));
+  }
+
   // After a successful apply Naukri leaves the job page for an "Apply Confirmation" page:
   // /myapply/saveApply?strJobsarr=[<jobId>]&applytype=single...
   function onConfirmationPage() {
@@ -227,8 +234,11 @@
       return { state: 'waiting' };
     }
     var msgs = botMessages(d).map(function(m) { return norm(m.innerText); }).filter(Boolean);
-    var question = msgs[msgs.length - 1] || '';
+    var question = stripGreeting(msgs[msgs.length - 1] || '');
     var context = msgs.slice(-3, -1).join(' ');
+    // Only a greeting/instruction so far ("Hi X, thank you for showing interest. Kindly answer all
+    // the questions...") - the real question is posted a moment later, so keep waiting for it
+    if (!question) return { state: 'waiting' };
 
     var radios = qa('input[type=radio]', d).filter(function(i) { return visible(i) || visible(i.parentElement); });
     var checks = qa('input[type=checkbox]', d).filter(function(i) { return visible(i) || visible(i.parentElement); });
