@@ -333,6 +333,7 @@ input[type="file"] { display: none; }
         <button class="btn danger" id="aaStop" style="display:none">Stop</button>
       </div>
       <div class="stats" id="aaStats"></div>
+      <div class="stats" id="aaLeadStats"></div>
       <div id="aaConfirm"></div>
       <div class="log" id="aaLog"><div class="info">Fill in your Profile once, pick a mode, and press Start. Pick LinkedIn, Indeed, Naukri or several, then press Start. Keep this panel open and the Chrome window visible (not minimized) while it runs.</div></div>
 
@@ -355,6 +356,11 @@ input[type="file"] { display: none; }
           </label>
           <label class="f">Min delay between jobs (s)<input type="number" data-s="minDelay" min="0"></label>
           <label class="f">Max delay between jobs (s)<input type="number" data-s="maxDelay" min="0"></label>
+          <div class="f full"><div class="checks"><label><input type="checkbox" data-s="collectLeads"> LinkedIn: also scan company-site jobs for hiring team and emails</label></div>
+            <span class="hint">They are only read, never applied to. Turn off to search Easy Apply jobs only.</span></div>
+          <label class="f">Company-site jobs to scan per run<input type="number" data-s="maxLeadScan" min="1" max="500"></label>
+          <div class="f full"><div class="checks"><label><input type="checkbox" data-s="suggestedFirst"> LinkedIn: start with suggested jobs (Top job picks), then the searches</label></div>
+            <span class="hint">LinkedIn picks these, so your keywords, cities, date and experience filters don't apply. "Skip titles" and "Skip companies" still do. The AI job-fit filter helps here.</span></div>
         </div>
       </details>
 
@@ -440,6 +446,15 @@ input[type="file"] { display: none; }
           <div class="f full"><button class="btn danger" id="aaResetProfile">Start over as a new user</button>
             <span class="hint">Clears this profile and shows the setup screen again. Saved answers and history are kept.</span></div>
         </div>
+      </details>
+
+      <details id="secLeads">
+        <summary>Leads <span class="src" id="aaLeadCount"></span></summary>
+        <div class="sec"><div class="full">
+          <div class="hint" style="margin-bottom:6px">Hiring team and emails found on LinkedIn jobs. Nothing is sent from here: export the CSV (it has LinkedIn profile URLs for Apollo) or click an email to write it yourself.</div>
+          <div class="runbar" style="margin-bottom:6px"><button class="btn ghost" id="aaLeadsExport" style="flex:1">Export CSV</button><button class="btn ghost" id="aaLeadsClear">Clear leads</button></div>
+          <table id="aaLeads"></table>
+        </div></div>
       </details>
 
       <details id="secAnswers">

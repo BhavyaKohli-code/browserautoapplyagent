@@ -80,6 +80,7 @@
     $('aaStats').innerHTML = running || st.applied || st.skipped
       ? 'This run: <b>' + st.applied + '</b>&nbsp;' + modeLabel + ' · <b>' + st.skipped + '</b>&nbsp;skipped'
       : '';
+    $('aaLeadStats').textContent = st.funnel && st.funnel.scanned ? 'LinkedIn: ' + AA.funnelText(st.funnel, settings.mode) : '';
   }
 
   // ---------- confirm-before-submit ----------
@@ -171,7 +172,53 @@
     }).join('') || '<tr><td class="hint">Nothing yet.</td></tr>';
   }
 
-  function refresh() { renderAnswers(); renderHistory(); }
+  // ---------- leads ----------
+  async function renderLeads() {
+    var leads = await AA.load('aaLeads', []);
+    var people = leads.reduce(function(n, l) { return n + l.people.length; }, 0);
+    var emails = leads.reduce(function(n, l) { return n + l.emails.length; }, 0);
+    $('aaLeadCount').textContent = leads.length ? '(' + people + ' people, ' + emails + ' emails)' : '';
+    $('aaLeads').innerHTML = leads.slice(0, 150).map(function(l) {
+      var who = l.people.map(function(p) {
+        return '<a href="' + esc(p.url) + '" target="_blank" title="' + esc(p.title).replace(/"/g, '&quot;') + '">' + esc(p.name) + '</a>';
+      }).concat(l.emails.map(function(e) {
+        return '<a href="mailto:' + esc(e) + '">' + esc(e) + '</a>';
+      }));
+      return '<tr><td><a href="https://www.linkedin.com/jobs/view/' + encodeURIComponent(l.id) + '/" target="_blank">' + esc(l.title.slice(0, 50)) + '</a><br>' +
+        '<span class="src">' + esc(l.company) + ' · ' + (l.apply === 'easy' ? 'Easy Apply' : 'Company site') + (l.status ? ' · ' + esc(l.status) : '') + '</span></td>' +
+        '<td>' + who.join('<br>') + '</td></tr>';
+    }).join('') || '<tr><td class="hint">Nothing yet.</td></tr>';
+  }
+
+  $('aaLeadsExport').addEventListener('click', async function() {
+    var leads = await AA.load('aaLeads', []);
+    if (!leads.length) { log('No leads to export yet.', 'info'); return; }
+    // The BOM makes Excel read non-English names correctly
+    var url = URL.createObjectURL(new Blob(['﻿' + AA.leadsCsv(leads)], { type: 'text/csv' }));
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'linkedin-leads-' + new Date().toISOString().slice(0, 10) + '.csv';
+    a.click();
+    setTimeout(function() { URL.revokeObjectURL(url); }, 10000);
+  });
+
+  // Two clicks, no window.confirm (it blocks the panel)
+  $('aaLeadsClear').addEventListener('click', async function() {
+    var btn = this;
+    if (AA.state.running) { log('Stop the current run before clearing leads.', 'error'); return; }
+    if (!btn.dataset.armed) {
+      btn.dataset.armed = '1';
+      btn.textContent = 'Click again to clear';
+      setTimeout(function() { delete btn.dataset.armed; btn.textContent = 'Clear leads'; }, 4000);
+      return;
+    }
+    delete btn.dataset.armed;
+    btn.textContent = 'Clear leads';
+    await AA.save('aaLeads', []);
+    renderLeads();
+  });
+
+  function refresh() { renderAnswers(); renderHistory(); renderLeads(); }
 
   // ---------- cities list ----------
   function renderCities() {

@@ -10,6 +10,8 @@
   var norm = function(s) { return (s || '').replace(/\s+/g, ' ').trim(); };
   var PLACEHOLDER_RE = /^(select an option|select|choose|choose an option|--|selecciona una opción|seleccionar)$/i;
   var ERROR_RE = /required|invalid|please (enter|select|make)|must be|enter a (whole|decimal|valid)|larger than|less than|obligatorio|no válid/i;
+  // Search results use the 2026 UI; suggested jobs (/jobs/collections/recommended/) still use the classic one
+  var CARD_SEL = 'div[role=button][componentkey^="job-card-component-ref-"], [data-occludable-job-id]';
 
   function visible(el) {
     if (!el) return false;
@@ -18,12 +20,18 @@
   }
 
   function cardEls() {
-    return Array.prototype.slice.call(
-      document.querySelectorAll('div[role=button][componentkey^="job-card-component-ref-"]'));
+    return Array.prototype.slice.call(document.querySelectorAll(CARD_SEL));
   }
 
   function cardId(el) {
-    return (el.getAttribute('componentkey') || '').replace('job-card-component-ref-', '');
+    return el.getAttribute('data-occludable-job-id') ||
+      (el.getAttribute('componentkey') || '').replace('job-card-component-ref-', '');
+  }
+
+  // Classic UI: the detail pane, once it shows this job
+  function classicPane(id) {
+    var pane = document.querySelector('.jobs-search__job-details--wrapper');
+    return pane && pane.querySelector('a[href*="/jobs/view/' + id + '"]') ? pane : null;
   }
 
   function applyDialog() {
@@ -56,7 +64,7 @@
     for (var i = 0; i < btns.length; i++) {
       var b = btns[i];
       var label = (b.getAttribute('aria-label') || '') + ' ' + (b.innerText || '');
-      if (/easy apply|solicitud sencilla/i.test(label) && visible(b) && !b.closest('[componentkey^="job-card-component-ref-"]')) return b;
+      if (/easy apply|solicitud sencilla/i.test(label) && visible(b) && !b.closest(CARD_SEL)) return b;
     }
     return null;
   }
@@ -72,7 +80,18 @@
 
   // ---------- Search results ----------
 
-  function listCards() {
+  // Classic cards are empty until scrolled into view
+  async function renderCards() {
+    var els = cardEls().filter(function(el) { return el.hasAttribute('data-occludable-job-id'); });
+    for (var i = 0; i < els.length; i++) {
+      els[i].scrollIntoView({ block: 'center' });
+      for (var w = 0; w < 6 && !norm(els[i].innerText); w++) await sleep(150);
+    }
+    if (els.length) els[0].scrollIntoView({ block: 'center' });
+  }
+
+  async function listCards() {
+    await renderCards();
     return cardEls().map(function(el) {
       var lines = el.innerText.split('\n').map(norm).filter(Boolean);
       // Some cards start with an a11y line ("Selected, Title" / "Title (Verified job)") followed by the title again
@@ -88,7 +107,7 @@
         applied: applied,
         easyApply: lines.some(function(l) { return /^easy apply$/i.test(l); })
       };
-    });
+    }).filter(function(c) { return c.title; });
   }
 
   async function selectCard(id) {
@@ -96,12 +115,14 @@
     if (!el) return { ok: false, message: 'Card not found' };
     el.scrollIntoView({ block: 'center' });
     await sleep(300);
-    await window.__humanAA.clickEl(el);
+    var classic = el.hasAttribute('data-occludable-job-id');
+    await window.__humanAA.clickEl((classic && el.querySelector('a[href*="/jobs/view/"]')) || el);
     // Wait for the detail pane to switch to this job
     for (var i = 0; i < 20; i++) {
       await sleep(300);
       if (location.href.indexOf(id) >= 0) break;
     }
+    for (var p = 0; classic && p < 10 && !classicPane(id); p++) await sleep(300);
     await sleep(1200);
     return { ok: true };
   }
@@ -119,9 +140,20 @@
       var b = btns[i];
       var label = norm((b.getAttribute('aria-label') || '') + ' ' + (b.innerText || ''));
       if (/^apply\b|\bapply on company website\b/i.test(label) && !/easy apply/i.test(label) &&
-          visible(b) && !b.closest('[componentkey^="job-card-component-ref-"]')) return b;
+          visible(b) && !b.closest(CARD_SEL)) return b;
     }
     return null;
+  }
+
+  // The results list is a lazy-column too (and comes first), so the detail pane is found from its Apply button
+  function paneScroller(applyBtn) {
+    var anchor = applyBtn || externalApplyButton() || easyApplyButton();
+    if (!anchor) {
+      anchor = Array.prototype.slice.call(document.querySelectorAll('[data-testid="lazy-column"]')).find(function(c) {
+        return !c.querySelector(CARD_SEL);
+      });
+    }
+    return anchor ? scrollableAncestor(anchor) : null;
   }
 
   async function getJobDetails() {
@@ -133,15 +165,15 @@
     }
     if (!ea) { await sleep(800); ea = easyApplyButton(); }
     // The description is lazy-loaded; scroll the detail pane until it renders
-    var desc = document.querySelector('[data-testid="expandable-text-box"]');
-    var anchor = ea || document.querySelector('[data-testid="lazy-column"]');
-    var scroller = anchor ? scrollableAncestor(anchor) : null;
+    var DESC_SEL = '[data-testid="expandable-text-box"], #job-details';
+    var desc = document.querySelector(DESC_SEL);
+    var scroller = paneScroller(ea);
     var paneText = '';
     if (scroller) {
       for (var s = 0; s < 20 && !desc; s++) {
         scroller.scrollTop += 400;
         await sleep(350);
-        desc = document.querySelector('[data-testid="expandable-text-box"]');
+        desc = document.querySelector(DESC_SEL);
       }
       paneText = scroller.innerText || '';
       scroller.scrollTop = 0;
@@ -161,6 +193,97 @@
     };
   }
 
+  // ---------- Contacts for cold outreach ----------
+
+  var EMAIL_RE = /[a-z0-9][\w.+-]*@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/gi;
+  // "jane [at] acme [dot] com", "jane(at)acme.com"
+  var HIDDEN_EMAIL_RE = /([a-z0-9][\w.+-]*)\s*[\[(]\s*at\s*[\])]\s*([a-z0-9-]+(?:(?:\.|\s*[\[(]\s*dot\s*[\])]\s*)[a-z0-9-]+)+)/gi;
+  // Mailboxes nobody hires from, image names and placeholder addresses
+  var NOT_A_CONTACT_RE = /^(no-?reply|do-?not-?reply|legal|dpo|gdpr|data-?protection|accommodations?|accessibility|abuse|security|ethics|sales)\b|(privacy|fraud|compliance)[^@]*@|\.(png|jpe?g|gif|svg|webp)$|@(example|email|domain|company|yourcompany)\./i;
+
+  function findEmails(text) {
+    var found = (text.match(EMAIL_RE) || []).slice();
+    var m;
+    HIDDEN_EMAIL_RE.lastIndex = 0;
+    while ((m = HIDDEN_EMAIL_RE.exec(text))) {
+      found.push(m[1] + '@' + m[2].replace(/\s*[\[(]\s*dot\s*[\])]\s*/gi, '.').replace(/\s+/g, ''));
+    }
+    var out = [];
+    found.forEach(function(e) {
+      e = e.toLowerCase();
+      if (!NOT_A_CONTACT_RE.test(e) && out.indexOf(e) < 0) out.push(e);
+    });
+    return out;
+  }
+
+  // [name, headline]. The 2026 link holds name, "• 2nd", headline, "Job poster"; the classic link
+  // holds only the name, so the headline is found in the surrounding box.
+  function personLines(a, slot) {
+    var lines = [];
+    for (var box = a; box && box !== slot && lines.length < 2; box = box.parentElement) {
+      // Some cards repeat the name, hence the indexOf
+      lines = box.innerText.split('\n').map(norm).filter(function(l, i, all) {
+        return l && all.indexOf(l) === i && !/^([•·].*|\d(st|nd|rd|th)\+?|job poster.*|message|connect|follow)$/i.test(l);
+      });
+    }
+    return lines;
+  }
+
+  function hiringSlot(id) {
+    var slot = document.querySelector('[componentkey="JobDetailsPeopleWhoCanHelpSlot_' + CSS.escape(id) + '"]');
+    if (slot) return slot;
+    var pane = classicPane(id);
+    if (!pane) return null;
+    // "People you can reach out to" is a section with the same class, so go by the heading
+    return Array.prototype.slice.call(pane.querySelectorAll('.job-details-people-who-can-help__section--two-pane')).find(function(s) {
+      return /meet the hiring team/i.test(s.innerText);
+    }) || null;
+  }
+
+  // Only people after the "Meet the hiring team" label: the same block also lists alumni and connections
+  function hiringTeam(slot) {
+    var label = Array.prototype.slice.call(slot.querySelectorAll('h2, h3, p, span')).find(function(n) {
+      return /^meet the hiring team$/i.test(norm(n.textContent));
+    });
+    if (!label) return [];
+    var people = [];
+    slot.querySelectorAll('a[href*="/in/"]').forEach(function(a) {
+      if (!(label.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING)) return;
+      var url = a.origin + a.pathname;
+      if (!/^https:\/\/[a-z]+\.linkedin\.com\/in\/[^\s"'<>]+$/.test(url)) return;
+      if (people.some(function(p) { return p.url === url; })) return;
+      var lines = personLines(a, slot);
+      var name = (lines[0] || '').replace(/\s*\(.*\)\s*$/, '').replace(/,.*$/, '').trim();
+      if (name) people.push({ name: name, title: lines[1] || '', url: url });
+    });
+    return people;
+  }
+
+  // Reads the open job's pane, so call after getJobDetails. Only reads: nothing is clicked.
+  async function getContacts(id) {
+    var people = [];
+    // The block loads late, then the pane re-renders and it can vanish and return, so one look is not
+    // enough. Its key names the job, so finding it also proves the pane shows this job. A job with
+    // no hiring team uses up the whole wait.
+    for (var s = 0; s < 14 && !people.length; s++) {
+      var slot = hiringSlot(id);
+      if (slot) people = hiringTeam(slot);
+      else {
+        var sc = paneScroller();
+        if (sc) sc.scrollTop += 500;
+      }
+      if (!people.length) await sleep(300);
+    }
+    // Looked up again: the re-render replaces the pane's nodes
+    var scroller = paneScroller();
+    var text = scroller ? scroller.innerText : '';
+    var mailtos = scroller ? Array.prototype.slice.call(scroller.querySelectorAll('a[href^="mailto:"]')).map(function(a) {
+      return a.getAttribute('href').slice(7).split('?')[0] + ' ';
+    }).join('') : '';
+    if (scroller) scroller.scrollTop = 0;
+    return { emails: findEmails(text + ' ' + mailtos), people: people };
+  }
+
   async function nextResultsPage() {
     var btn = document.querySelector('[data-testid="pagination-controls-next-button-visible"]');
     if (!btn) btn = buttonByText(document, /^(next|siguiente)$/i);
@@ -178,24 +301,41 @@
   // ---------- Easy Apply modal ----------
 
   async function openEasyApply() {
-    var btn = easyApplyButton();
-    if (!btn) return { ok: false, message: 'No Easy Apply button' };
-    await window.__humanAA.clickEl(btn);
-    for (var i = 0; i < 25; i++) {
-      await sleep(300);
-      // Click through the safety-reminder style interstitial if it comes first
-      var dlgs = openDialogs();
-      for (var d = 0; d < dlgs.length; d++) {
-        var inter = buttonByText(dlgs[d], INTERSTITIAL_RE);
-        if (inter) { await window.__humanAA.clickEl(inter); await sleep(1200); break; }
-      }
-      if (applyDialog() && !buttonByText(applyDialog(), INTERSTITIAL_RE)) {
-        await sleep(600); // let the first step's fields and footer render
-        return { ok: true };
-      }
-    }
     if (applyDialog()) return { ok: true };
-    return { ok: false, message: 'Easy Apply dialog did not open' };
+    // A confirmation or "Save this application?" prompt left over from the last job swallows the click
+    if (openDialogs().length) await closeAllDialogs();
+    var btn = null;
+    // The detail pane can re-render while the cursor travels to the button, leaving us
+    // holding a detached node whose click does nothing - so re-find it and click again
+    for (var attempt = 0; attempt < 3; attempt++) {
+      for (var w = 0; w < 10 && !(btn = easyApplyButton()); w++) await sleep(300);
+      if (!btn) break;
+      btn.scrollIntoView({ block: 'center' });
+      await sleep(300);
+      await window.__humanAA.clickEl(btn);
+      if (!btn.isConnected && (btn = easyApplyButton())) btn.click();
+      for (var i = 0; i < 15; i++) {
+        await sleep(300);
+        // Click through the safety-reminder style interstitial if it comes first
+        var dlgs = openDialogs();
+        for (var d = 0; d < dlgs.length; d++) {
+          var inter = buttonByText(dlgs[d], INTERSTITIAL_RE);
+          if (inter) { await window.__humanAA.clickEl(inter); await sleep(1200); break; }
+        }
+        if (applyDialog() && !buttonByText(applyDialog(), INTERSTITIAL_RE)) {
+          await sleep(600); // let the first step's fields and footer render
+          return { ok: true };
+        }
+      }
+      if (applyDialog()) return { ok: true };
+      if (openDialogs().length) await closeAllDialogs();
+    }
+    if (!btn) return { ok: false, message: 'No Easy Apply button' };
+    // Say what was on screen instead, so the next failure can be pinned down
+    var other = openDialogs().map(function(x) { return norm(x.innerText).slice(0, 80); }).join(' | ');
+    var notice = (document.body.innerText.match(/[^\n]{0,80}\b(limit|no longer accepting|try again later|something went wrong)\b[^\n]{0,80}/i) || [''])[0];
+    return { ok: false, message: 'Easy Apply dialog did not open after 3 clicks' +
+      (other ? ' (saw dialog: ' + other + ')' : '') + (notice ? ' (page says: ' + norm(notice).slice(0, 160) + ')' : '') };
   }
 
   function labelFor(el, dlg) {
@@ -351,11 +491,11 @@
       fields.push(f);
     }
 
-    var pb = dlg.querySelector('[role=progressbar]');
+    var pb = dlg.querySelector('[role=progressbar], progress');
     var pageText = norm(dlg.innerText);
     return {
       open: true,
-      progress: pb ? pb.getAttribute('aria-valuenow') : null,
+      progress: pb ? pb.getAttribute('aria-valuenow') || pb.getAttribute('value') : null,
       heading: norm((dlg.querySelector('h3') || {}).innerText || ''),
       fields: fields,
       hasResumeChoice: /resume|cv|currículum/i.test(pageText) && !!dlg.querySelector('input[type=radio]'),
@@ -554,6 +694,7 @@
     listCards: listCards,
     selectCard: selectCard,
     getJobDetails: getJobDetails,
+    getContacts: getContacts,
     nextResultsPage: nextResultsPage,
     openEasyApply: openEasyApply,
     readForm: readForm,
@@ -562,6 +703,8 @@
     waitForSubmitted: waitForSubmitted,
     discardApplication: discardApplication,
     closeAllDialogs: closeAllDialogs,
-    pageStatus: pageStatus
+    pageStatus: pageStatus,
+    // exported for testing
+    _findEmails: findEmails
   };
 })();

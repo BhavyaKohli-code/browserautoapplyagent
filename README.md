@@ -200,6 +200,34 @@ Your profile is the one entered in the setup screen (editable under **Profile**)
 Review **Saved answers** after a dry run and fix anything wrong – fixes are used from then on.
 **History** lists every job (with its site) and the reason when it was skipped.
 
+### Suggested jobs first (LinkedIn)
+
+**Start with suggested jobs** (Run settings, off by default) works through LinkedIn's "Top job picks
+for you" before your searches, up to 10 pages, then moves on to the searches if your limit isn't
+reached. LinkedIn chooses these jobs, so keywords, cities, date posted and experience level don't
+apply to them; **Skip titles** and **Skip companies** still do, and the AI job-fit filter is worth
+turning on. This page still uses LinkedIn's classic layout, which `linkedin-dom.js` handles separately.
+
+### Leads for cold outreach (LinkedIn)
+
+With **also scan company-site jobs** on (Run settings, on by default), a LinkedIn run searches all
+jobs instead of Easy Apply only. Your limit still counts applications, so a run of 20 keeps going
+until 20 are done. Every job it opens is also read for contacts; company-site jobs are only read,
+never applied to, and the Apply link is never followed.
+
+- **Hiring team**: people under "Meet the hiring team" (name, headline, LinkedIn URL). Alumni and
+  connections LinkedIn lists in the same block are left out. Many jobs have no hiring team.
+- **Emails**: addresses in the job post, including "jane [at] acme [dot] com". Mailboxes such as
+  no-reply@ and privacy@ are ignored.
+
+At the end the log gives the funnel, e.g. `50 scanned · 20 applied · 22 Easy Apply · 28 company site ·
+31 with hiring team · 4 with email`. Contacts stay in **Leads** across runs (up to 2,000 jobs). **Export
+CSV** gives one row per person or email. The extension never sends anything and does not talk to
+Apollo: import the CSV there, where the LinkedIn URL finds the person's work email.
+
+Reading more jobs means more page views. **Company-site jobs to scan per run** (default 75) caps that;
+past it, company-site jobs are left unopened and Easy Apply jobs carry on. Leads are collected in dry runs too.
+
 Site notes:
 - LinkedIn applies inside a modal on the results page. Location uses LinkedIn's `geoId`.
 - Indeed opens each application in its own `smartapply.indeed.com` tab and closes it afterwards.

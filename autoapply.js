@@ -39,6 +39,9 @@
     minDelay: 8,
     maxDelay: 20,
     fitCheck: false,
+    collectLeads: true, // LinkedIn: also scan company-site jobs and keep hiring-team contacts and emails
+    maxLeadScan: 75, // company-site jobs opened per run; Easy Apply jobs keep going after this
+    suggestedFirst: false, // LinkedIn: work through "Top job picks for you" before the searches
     sites: 'linkedin', // linkedin | indeed | naukri | both (LinkedIn + Indeed) | all
     cities: [], // searched one by one on every site; "Remote" = remote jobs; empty = whole country
     indeedLocation: '', // older single-city fields, moved into cities on first load
@@ -92,7 +95,9 @@
     profile: null,
     applied: 0,
     skipped: 0,
-    pendingConfirm: null
+    pendingConfirm: null,
+    leads: [],
+    funnel: null // this run's counts: { scanned, easy, external, people, emails, applied }
   };
 
   // ---------- storage ----------
@@ -135,8 +140,9 @@
 
   var SITES = {
     linkedin: {
-      name: 'LinkedIn', file: 'linkedin-dom.js', ns: '__liAA', applyInNewTab: false,
+      name: 'LinkedIn', file: 'linkedin-dom.js', ns: '__liAA', applyInNewTab: false, leads: true,
       tabQuery: 'https://www.linkedin.com/*', home: 'https://www.linkedin.com/jobs/',
+      suggestedUrl: 'https://www.linkedin.com/jobs/collections/recommended/',
       seenKey: function(id) { return id; },
       jobUrl: function(id) { return 'https://www.linkedin.com/jobs/view/' + id + '/'; },
       searchUrl: async function(s, k, city) {
@@ -324,7 +330,8 @@
     var wtOnlyRemote = remoteOnly || (settings.workType.remote && !settings.workType.onsite && !settings.workType.hybrid);
     p.set('keywords', wtOnlyRemote && !/\bremote\b/i.test(keyword) ? keyword + ' remote' : keyword);
     p.set('geoId', geo);
-    p.set('f_AL', 'true');
+    // Easy Apply only, unless company-site jobs are wanted for their contacts
+    if (!settings.collectLeads) p.set('f_AL', 'true');
     if (settings.datePosted) p.set('f_TPR', settings.datePosted);
     var wt = [];
     if (remoteOnly) wt.push('2');
@@ -1369,6 +1376,54 @@
     ui.refresh();
   }
 
+  // ---------- leads (cold outreach contacts) ----------
+  // Jobs with no hiring team and no email only count in the funnel; they are not kept
+  async function recordLead(job, contacts, isEasy) {
+    var f = state.funnel;
+    f.scanned++;
+    f[isEasy ? 'easy' : 'external']++;
+    if (contacts.people.length) f.people++;
+    if (contacts.emails.length) f.emails++;
+    ui.status('running');
+    if (!contacts.people.length && !contacts.emails.length) return null;
+    var lead = {
+      id: job.id, title: job.title, company: job.company, location: job.location,
+      url: state.site.jobUrl(job.id, state.settings), apply: isEasy ? 'easy' : 'external', status: '',
+      people: contacts.people, emails: contacts.emails, ts: Date.now()
+    };
+    state.leads = state.leads.filter(function(l) { return l.id !== job.id; });
+    state.leads.unshift(lead);
+    if (state.leads.length > 2000) state.leads.length = 2000;
+    await save('aaLeads', state.leads);
+    ui.refresh();
+    return lead;
+  }
+
+  function funnelText(f, mode) {
+    return f.scanned + ' scanned · ' + f.applied + (mode === 'dry' ? ' dry runs' : ' applied') + ' · ' +
+      f.easy + ' Easy Apply · ' + f.external + ' company site · ' +
+      f.people + ' with hiring team · ' + f.emails + ' with email';
+  }
+
+  // One row per person and per email: an email in a job post can't be tied to a person on the hiring team
+  function leadsCsv(leads) {
+    var cell = function(v) {
+      v = String(v == null ? '' : v);
+      if (/^[=+\-@]/.test(v)) v = "'" + v; // spreadsheets run cells starting with these as formulas
+      return '"' + v.replace(/"/g, '""') + '"';
+    };
+    var rows = [['First Name', 'Last Name', 'Title', 'Email', 'Person Linkedin Url', 'Company', 'Job Title', 'Job Url', 'Job Location', 'Apply Type', 'Status']];
+    leads.forEach(function(l) {
+      var job = [l.company, l.title, l.url, l.location, l.apply === 'easy' ? 'Easy Apply' : 'Company site', l.status];
+      l.people.forEach(function(p) {
+        var words = p.name.split(/\s+/);
+        rows.push([words[0], words.slice(1).join(' '), p.title, '', p.url].concat(job));
+      });
+      l.emails.forEach(function(e) { rows.push(['', '', '', e, ''].concat(job)); });
+    });
+    return rows.map(function(r) { return r.map(cell).join(','); }).join('\r\n');
+  }
+
   async function run() {
     if (state.running) return;
     var settings = await load('aaSettings', DEFAULT_SETTINGS);
@@ -1443,6 +1498,8 @@
     state.stop = false;
     state.applied = 0;
     state.skipped = 0;
+    state.leads = await load('aaLeads', []);
+    state.funnel = { scanned: 0, easy: 0, external: 0, people: 0, emails: 0, applied: 0 };
     ui.status('running');
 
     try {
@@ -1462,6 +1519,7 @@
         }
       }
       ui.log('Finished. ' + state.applied + ' ' + (settings.mode === 'dry' ? 'dry runs' : 'applied') + ', ' + state.skipped + ' skipped.', 'done');
+      if (state.funnel.scanned) ui.log('LinkedIn: ' + funnelText(state.funnel, settings.mode) + '. Contacts are under Leads.', 'done');
     } catch (e) {
       ui.log('Stopped: ' + e.message, 'error');
     } finally {
@@ -1480,6 +1538,8 @@
     var limit = siteLimit(settings, state.siteKey);
     var target = state.siteKey === 'linkedin' ? limit : limit - appliedToday(history, site.name);
     var done = 0;
+    var collect = settings.collectLeads && site.leads;
+    var leadCap = parseInt(settings.maxLeadScan, 10) || DEFAULT_SETTINGS.maxLeadScan;
     if (target <= 0) {
       ui.log(site.name + ': today\'s limit of ' + limit + ' applications is reached – skipping. Try again tomorrow.', 'skip');
       return;
@@ -1496,11 +1556,13 @@
     (cities.length ? cities : ['']).forEach(function(city) {
       keywords.forEach(function(kw) { searches.push({ keyword: kw, city: city }); });
     });
+    if (settings.suggestedFirst && site.suggestedUrl) searches.unshift({ suggested: true });
 
     for (var k = 0; k < searches.length; k++) {
       if (state.stop || done >= target) return;
-      var url = await site.searchUrl(settings, searches[k].keyword, searches[k].city);
-      ui.log('Searching: "' + searches[k].keyword + '"' + (searches[k].city ? ' in ' + searches[k].city : ''), 'info');
+      var suggested = searches[k].suggested;
+      var url = suggested ? site.suggestedUrl : await site.searchUrl(settings, searches[k].keyword, searches[k].city);
+      ui.log(suggested ? 'Suggested jobs first…' : 'Searching: "' + searches[k].keyword + '"' + (searches[k].city ? ' in ' + searches[k].city : ''), 'info');
       await chrome.tabs.update(state.tabId, { url: url });
       await waitForLoad(state.tabId);
       await sleep(3000);
@@ -1526,11 +1588,15 @@
             ui.log('Skip ' + job.company + ' (excluded company)', 'skip');
             continue;
           }
+          // Past the scan limit, company-site jobs are left unopened (and unseen, for a later run)
+          if (collect && !job.easyApply && state.funnel.external >= leadCap) continue;
+          // Suggested jobs can't be filtered to Easy Apply in the URL, so the card decides
+          if (suggested && !collect && !job.easyApply) continue;
 
           ui.log('▶ ' + job.title + ' — ' + job.company, 'job');
           await call('selectCard', job.id);
           var details = await call('getJobDetails');
-          if (!details.hasEasyApply) {
+          if (!details.hasEasyApply && !collect) {
             ui.log('  No quick-apply button (already applied or external site).', 'skip');
             seen[site.seenKey(job.id)] = 'skipped';
             continue;
@@ -1548,6 +1614,27 @@
             } catch (e) { ui.log('  Fit check failed (' + e.message + '), applying anyway', 'error'); }
           }
 
+          var lead = null;
+          if (collect) {
+            try {
+              var contacts = await call('getContacts', job.id);
+              lead = await recordLead(job, contacts, details.hasEasyApply);
+              if (contacts.people.length || contacts.emails.length) {
+                ui.log('  Lead: ' + contacts.people.map(function(p) { return p.name; }).concat(contacts.emails).join(', '), 'info');
+              }
+            } catch (e) { ui.log('  Could not read contacts: ' + e.message, 'error'); }
+          }
+
+          if (!details.hasEasyApply) {
+            ui.log('  Company-site job: not applied.', 'skip');
+            seen[site.seenKey(job.id)] = 'skipped';
+            await save('aaSeen', seen);
+            // Jobs opened back to back look robotic; this is much shorter than the wait after applying
+            var glance = Date.now() + 3000 + Math.random() * 4000;
+            while (Date.now() < glance && !state.stop) await wanderOn(state.tabId, Math.min(2000, glance - Date.now()));
+            continue;
+          }
+
           var result;
           try {
             result = site.chatApply ? await applyNaukri(job, details, profile, settings, answers)
@@ -1558,9 +1645,16 @@
           }
 
           if (result.status === 'stopped') return;
-          if (result.status === 'applied' || result.status === 'dry-run') { state.applied++; done++; }
-          else state.skipped++;
+          if (result.status === 'applied' || result.status === 'dry-run') {
+            state.applied++;
+            done++;
+            if (collect) state.funnel.applied++;
+          } else state.skipped++;
           ui.log('  ' + result.status.toUpperCase() + (result.reason ? ': ' + result.reason : ''), result.status === 'applied' || result.status === 'dry-run' ? 'done' : 'skip');
+          if (lead) {
+            lead.status = result.status;
+            await save('aaLeads', state.leads);
+          }
           await recordResult(job, result, history, seen);
           ui.status('running');
 
@@ -1617,6 +1711,8 @@
     buildIndeedUrl: buildIndeedUrl,
     buildNaukriUrl: buildNaukriUrl,
     extractProfile: extractProfile,
+    funnelText: funnelText,
+    leadsCsv: leadsCsv,
     // exported for testing
     _ruleAnswer: ruleAnswer,
     _resolveAnswer: resolveAnswer,
