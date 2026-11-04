@@ -587,6 +587,14 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   }
 });
 
+// Timer for Auto Apply while the side panel is hidden (browser minimized): the panel's own
+// timers get throttled, the service worker's don't
+chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
+  if (!msg || msg.type !== 'aa_sleep') return;
+  setTimeout(function() { sendResponse(true); }, Math.min(Math.max(+msg.ms || 0, 0), 240000));
+  return true;
+});
+
 // Clean up when tabs close
 chrome.tabs.onRemoved.addListener(function(tabId) {
   delete knownTabs[tabId];

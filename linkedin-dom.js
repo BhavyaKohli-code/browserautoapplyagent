@@ -690,7 +690,27 @@
     };
   }
 
+  // The signed-in member's own profile URL: linkedin.com/in/me/ redirects to it
+  async function ownProfileUrl() {
+    var clean = function(href) {
+      var m = String(href || '').match(/linkedin\.com\/in\/([\w%-]+)/i);
+      return m && m[1].toLowerCase() !== 'me' ? 'https://www.linkedin.com/in/' + m[1] + '/' : null;
+    };
+    try {
+      var res = await fetch('/in/me/', { credentials: 'include' });
+      var u = clean(res.url);
+      if (u) return u;
+      var html = await res.text();
+      var canon = html.match(/<link[^>]+rel="canonical"[^>]+href="([^"]+)"/i);
+      if (canon && clean(canon[1])) return clean(canon[1]);
+    } catch (e) {}
+    // Fallback: the "Me" menu / profile card links on the current page
+    var a = document.querySelector('.global-nav__me a[href*="/in/"], .feed-identity-module a[href*="/in/"], a.global-nav__secondary-link[href*="/in/"]');
+    return a ? clean(a.href) : null;
+  }
+
   window.__liAA = {
+    ownProfileUrl: ownProfileUrl,
     listCards: listCards,
     selectCard: selectCard,
     getJobDetails: getJobDetails,

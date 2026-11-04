@@ -623,6 +623,14 @@
     showLimitHints();
     bind('data-p', function() { return profile; }, 'aaProfile');
     bind('data-o', function() { return profile; }, 'aaProfile', setupChanged);
+    // A run can fill in your LinkedIn URL from your account: keep it, so later Profile edits don't wipe it
+    chrome.storage.onChanged.addListener(function(ch) {
+      var nv = ch.aaProfile && ch.aaProfile.newValue;
+      if (nv && nv.linkedinUrl && !profile.linkedinUrl) {
+        profile.linkedinUrl = nv.linkedinUrl;
+        document.querySelectorAll('[data-o="linkedinUrl"], [data-p="linkedinUrl"]').forEach(function(el) { el.value = nv.linkedinUrl; });
+      }
+    });
     document.querySelector('[data-s="fitCheck"]').value = String(!!settings.fitCheck);
 
     // New user (or incomplete profile): the setup screen comes first

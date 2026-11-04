@@ -118,7 +118,18 @@
     return (s || '').toLowerCase().replace(/\*/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
   }
 
-  var sleep = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
+  // With the browser minimized the side panel is hidden and its timers get throttled (down to one
+  // per minute after a while), so waits are also timed by the background worker, which isn't
+  var sleep = function(ms) {
+    return new Promise(function(r) {
+      var done = false;
+      var fin = function() { if (!done) { done = true; r(); } };
+      setTimeout(fin, ms);
+      if (document.hidden && ms >= 200) {
+        try { chrome.runtime.sendMessage({ type: 'aa_sleep', ms: ms }).then(fin, function() {}); } catch (e) {}
+      }
+    });
+  };
 
   // ---------- UI hooks (set by sidepanel) ----------
   var ui = {
@@ -239,7 +250,7 @@
     var tabs = await chrome.tabs.query({ url: site.tabQuery, currentWindow: true });
     tabs = tabs.filter(function(t) { return !/smartapply\.|\/job-listings-|\/myapply\//.test(t.url || ''); });
     if (tabs.length) return tabs[0].id;
-    var t = await chrome.tabs.create({ url: site.home || 'about:blank', active: true });
+    var t = await chrome.tabs.create({ url: site.home || 'about:blank', active: false });
     await waitForLoad(t.id);
     return t.id;
   }
@@ -798,7 +809,8 @@
       return null;
     }
 
-    if (kind === 'text' || kind === 'typeahead' || kind === 'number' || kind === 'date') {
+    // (Textareas too: some forms ask for the LinkedIn URL, email or address in a multi-line box)
+    if (kind === 'text' || kind === 'textarea' || kind === 'typeahead' || kind === 'number' || kind === 'date') {
       if (/first name/.test(l)) return p.firstName || null;
       if (/last name|surname|family name/.test(l)) return p.lastName || null;
       if (/full name|^name$|your name/.test(l)) return (p.firstName + ' ' + p.lastName).trim() || null;
@@ -920,9 +932,26 @@
       // Rejected by the form: a decimal that must be whole (3.5 -> 4) is fixed without the LLM
       var fixed = fixNumberForError(field, r);
       if (fixed !== r) return { answer: fixed, source: 'profile' };
+      // An empty field flagged "This field is required" (or one holding something else) has not
+      // been given the profile answer yet -> use it; only a rejected profile answer goes further
+      var cur = Array.isArray(field.value) ? field.value.join(', ') : String(field.value || '');
+      if (!cur.trim() || cur.trim().toLowerCase() !== String(r).trim().toLowerCase()) return { answer: r, source: 'profile' };
     }
     if (EEO_RE.test(field.label.toLowerCase())) {
       throw new Error('"' + field.label + '" has no "prefer not to say" option (set Gender in your Profile if you want it answered)');
+    }
+    // LinkedIn URL missing from the Profile: take it from the signed-in LinkedIn account and keep it
+    if (/linkedin/i.test(field.label) && !profile.linkedinUrl && !(field.options && field.options.length) &&
+        state.siteKey === 'linkedin' && !state.triedOwnProfile) {
+      state.triedOwnProfile = true;
+      var own = null;
+      try { own = await call('ownProfileUrl'); } catch (e) {}
+      if (own) {
+        profile.linkedinUrl = own;
+        await save('aaProfile', profile);
+        ui.log('Your LinkedIn URL was not in your Profile – took it from your LinkedIn account: ' + own, 'done');
+        return { answer: own, source: 'profile' };
+      }
     }
     // (Only free-text fields: a Yes/No "Do you have a portfolio?" is fine for the LLM)
     if (!(field.options && field.options.length) && PERSONAL_RE.test(field.label.toLowerCase())) {
@@ -944,8 +973,9 @@
       return call('openEasyApply');
     }
     if (!details.applyUrl) return { ok: false, message: 'No apply link' };
-    var t = await chrome.tabs.create({ url: details.applyUrl, active: true });
+    var t = await chrome.tabs.create({ url: details.applyUrl, active: false });
     state.formTabId = t.id;
+    await keepAwake(t.id);
     await waitForLoad(t.id);
     for (var i = 0; i < 30; i++) {
       await sleep(500);
@@ -976,7 +1006,6 @@
       await dbgDetach(id);
     }
     state.formTabId = state.tabId;
-    try { await chrome.tabs.update(state.tabId, { active: true }); } catch (e) {}
   }
 
   // ---------- real mouse clicks (chrome.debugger) ----------
@@ -993,6 +1022,19 @@
     // Attaching shows the browser's "started debugging" bar, which shifts the page down.
     // Let the layout settle before anything measures button positions.
     await sleep(1200);
+  }
+
+  // Background mode: the bot's tab keeps working while you use another tab or minimize the
+  // browser. Focus emulation makes the browser treat the tab as visible and focused (no timer
+  // throttling, page keeps rendering), and the lifecycle call stops it from being frozen.
+  async function keepAwake(tabId) {
+    try {
+      await dbgAttach(tabId);
+      await chrome.debugger.sendCommand({ tabId: tabId }, 'Emulation.setFocusEmulationEnabled', { enabled: true });
+      try { await chrome.debugger.sendCommand({ tabId: tabId }, 'Page.setWebLifecycleState', { state: 'active' }); } catch (e) {}
+    } catch (e) {
+      ui.log('Could not keep the ' + (state.site ? state.site.name : '') + ' tab awake in the background (' + e.message + ') – keep it in front.', 'error');
+    }
   }
 
   async function dbgDetach(tabId) {
@@ -1250,8 +1292,9 @@
   async function applyNaukri(job, details, profile, settings, answers) {
     var qa = [];
     if (!details.applyUrl) return { status: 'skipped', reason: 'No job link', qa: qa };
-    var t = await chrome.tabs.create({ url: details.applyUrl, active: true });
+    var t = await chrome.tabs.create({ url: details.applyUrl, active: false });
     state.formTabId = t.id;
+    await keepAwake(t.id);
     await waitForLoad(t.id);
 
     var js = null;
@@ -1439,6 +1482,7 @@
     }
     state.settings = settings;
     state.profile = profile;
+    state.triedOwnProfile = false;
 
     // One-time cleanup (v0.7): AI-made answers for things profile rules now handle - salary,
     // URLs, dates, contact data - were sometimes wrong (e.g. "140 - 145 LPA"); drop them.
@@ -1523,6 +1567,8 @@
     } catch (e) {
       ui.log('Stopped: ' + e.message, 'error');
     } finally {
+      // Background mode over: hand the tabs back to normal (removes the "debugging" bar)
+      for (var dt in attached) { try { await chrome.debugger.sendCommand({ tabId: +dt }, 'Emulation.setFocusEmulationEnabled', { enabled: false }); } catch (e) {} await dbgDetach(+dt); }
       state.running = false;
       ui.status('idle');
     }
@@ -1548,7 +1594,8 @@
     ui.log('── ' + site.name + ' ──', 'job');
     state.tabId = await getSiteTab(site);
     state.formTabId = state.tabId;
-    await chrome.tabs.update(state.tabId, { active: true });
+    // Don't pull you back to the tab: it works in the background
+    await keepAwake(state.tabId);
 
     var cities = (settings.cities || []).map(function(c) { return String(c).trim(); }).filter(Boolean);
     // City by city: all keywords in the first city (e.g. Remote), then all keywords in the next...
